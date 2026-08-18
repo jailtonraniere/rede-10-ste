@@ -1,0 +1,5 @@
+nome,telefone,municipio,bairro,lideranca,observacao
+Rosa Fictícia,71988881111,Salvador,Liberdade,Marina Costa,Contato autorizado para validação
+Carlos Exemplo,71988882222,Salvador,Curuzu,Marina Costa,Apoiador informado
+Pessoa Telefone Inválido,123,Salvador,IAPI,João Lima,Deve aparecer como rejeitado
+Ana Duplicada,71999991002,Salvador,Liberdade,Marina Costa,Deve ir para revisão de duplicidade
