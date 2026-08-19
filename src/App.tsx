@@ -38,7 +38,7 @@ import {
   normalizePhone,
 } from "./lib/network";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import type { Member, SessionUser } from "./types";
+import type { Member, Role, SessionUser } from "./types";
 import {
   Duplicates,
   ImportPage,
@@ -66,8 +66,12 @@ function Logo() {
 }
 
 function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
-  const [email, setEmail] = useState("admin@rede10.demo"),
-    [password, setPassword] = useState("rede10demo"),
+  const [email, setEmail] = useState(
+      isSupabaseConfigured ? "" : "admin@rede10.demo",
+    ),
+    [password, setPassword] = useState(
+      isSupabaseConfigured ? "" : "rede10demo",
+    ),
     [show, setShow] = useState(false),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
@@ -81,13 +85,42 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
         email: loginEmail,
         password,
       });
-      if (error) setMessage(error.message);
-      else if (data.user)
-        onLogin({
-          ...demoUser,
-          id: data.user.id,
-          email: data.user.email ?? loginEmail,
-        });
+      if (error) {
+        setMessage("Login ou senha inválidos.");
+      } else if (data.user) {
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("id,nome,email,role,territory_id")
+          .eq("auth_user_id", data.user.id)
+          .single();
+        if (profileError || !profile) {
+          await supabase.auth.signOut();
+          setMessage("Seu acesso ainda não foi vinculado a um perfil. Procure a administração.");
+        } else {
+          const [{ data: member }, { data: territory }] = await Promise.all([
+            supabase
+              .from("network_members")
+              .select("id")
+              .eq("profile_id", profile.id)
+              .maybeSingle(),
+            profile.territory_id
+              ? supabase
+                  .from("territories")
+                  .select("nome")
+                  .eq("id", profile.territory_id)
+                  .maybeSingle()
+              : Promise.resolve({ data: null }),
+          ]);
+          onLogin({
+            id: data.user.id,
+            nome: profile.nome,
+            email: profile.email ?? data.user.email ?? loginEmail,
+            role: profile.role as Role,
+            memberId: member?.id ?? "",
+            territory: territory?.nome ?? "Todos",
+          });
+        }
+      }
     } else {
       setTimeout(
         () => onLogin(email.startsWith("admin") ? adminUser : demoUser),
