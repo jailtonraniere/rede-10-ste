@@ -43,8 +43,8 @@ export function memberFromRow(row: MemberRow): Member {
 
 export async function loadSessionUser(user: User): Promise<SessionUser> {
   const client = requireClient()
-  const { data: profile, error } = await client.from('profiles').select('id,nome,email,role,territory_id,status').eq('auth_user_id', user.id).single()
-  if (error || !profile || profile.status === 'bloqueado') throw new Error('Acesso sem perfil ativo.')
+  const { data: profile, error } = await client.from('profiles').select('id,nome,email,role,territory_id,status,is_super_admin,deleted_at').eq('auth_user_id', user.id).single()
+  if (error || !profile || profile.status === 'bloqueado' || profile.deleted_at) throw new Error('Acesso sem perfil ativo.')
   const [{ data: member }, { data: territory }] = await Promise.all([
     client.from('network_members').select('id').eq('profile_id', profile.id).maybeSingle(),
     profile.territory_id ? client.from('territories').select('nome').eq('id', profile.territory_id).maybeSingle() : Promise.resolve({ data: null }),
@@ -58,6 +58,7 @@ export async function loadSessionUser(user: User): Promise<SessionUser> {
     memberId: member?.id ?? '',
     territory: territory?.nome ?? 'Todos',
     mustChangePassword: user.user_metadata?.must_change_password === true,
+    isSuperAdmin: profile.is_super_admin === true,
   }
 }
 
@@ -152,12 +153,12 @@ export async function recordExportAudit(count: number, filters: Record<string, s
   if (error) throw error
 }
 
-export type TeamUser = { id:string; name:string; email?:string; username?:string; role:'administrador'|'cadastrador'; status:string; createdAt:string }
+export type TeamUser = { id:string; name:string; email?:string; username?:string; role:'administrador'|'cadastrador'; status:string; createdAt:string; isSuperAdmin:boolean }
 
 export async function loadTeamUsers(): Promise<TeamUser[]> {
-  const { data, error } = await requireClient().from('profiles').select('id,nome,email,username,role,status,created_at').in('role',['administrador','cadastrador']).order('created_at')
+  const { data, error } = await requireClient().from('profiles').select('id,nome,email,username,role,status,created_at,is_super_admin').in('role',['administrador','cadastrador']).is('deleted_at',null).order('created_at')
   if (error) throw error
-  return (data ?? []).map((row) => ({ id:row.id, name:row.nome, email:row.email ?? undefined, username:row.username ?? undefined, role:row.role, status:row.status, createdAt:row.created_at }))
+  return (data ?? []).map((row) => ({ id:row.id, name:row.nome, email:row.email ?? undefined, username:row.username ?? undefined, role:row.role, status:row.status, createdAt:row.created_at, isSuperAdmin:row.is_super_admin === true }))
 }
 
 export async function createTeamUser(input: {name:string;login:string;role:'administrador'|'cadastrador'}) {
@@ -171,6 +172,25 @@ export async function changeTeamUserRole(profileId:string, role:'administrador'|
   const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'update-role', profileId, role } })
   if (error) throw error
   if (data?.error) throw new Error(data.error)
+}
+
+export async function setTeamUserActive(profileId:string, active:boolean) {
+  const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'set-status', profileId, active } })
+  if (error) throw error
+  if (data?.error) throw new Error(data.error)
+}
+
+export async function deleteTeamUser(profileId:string) {
+  const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'delete', profileId } })
+  if (error) throw error
+  if (data?.error) throw new Error(data.error)
+}
+
+export async function resetTeamUserPassword(profileId:string) {
+  const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'reset-password', profileId } })
+  if (error) throw error
+  if (data?.error) throw new Error(data.error)
+  return data as {username:string;temporaryPassword:string}
 }
 
 export async function loadOperatingMode(): Promise<'mapeamento'|'mobilizacao'> {
