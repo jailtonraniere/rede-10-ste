@@ -96,6 +96,17 @@ export async function updateMember(id: string, changes: Record<string, unknown>)
   return memberFromRow(data as MemberRow)
 }
 
+export async function deleteMember(id: string): Promise<void> {
+  const { data, error } = await requireClient()
+    .from('network_members')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle()
+  if (error) throw error
+  if (!data) throw new Error('Você não tem permissão para excluir este cadastro.')
+}
+
 export async function bulkCreateMembers(items: NewMember[]): Promise<Member[]> {
   if (!items.length) return []
   const { data, error } = await requireClient().from('network_members').insert(items.map(memberPayload)).select('*')

@@ -13,6 +13,7 @@ import {
   Plus,
   Search,
   Settings2,
+  Trash2,
   Upload,
   UserCheck,
   Users,
@@ -30,7 +31,7 @@ import {
 } from "./lib/mapping";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { peMunicipalities } from "./data/pe-municipalities";
-import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createMember, createTeamUser, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resolveDuplicateReview, saveOperatingMode, submitCollection, updateMember, type ActivityItem, type DuplicateReview, type TeamUser } from "./services/data";
+import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createMember, createTeamUser, deleteMember, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resolveDuplicateReview, saveOperatingMode, submitCollection, updateMember, type ActivityItem, type DuplicateReview, type TeamUser } from "./services/data";
 
 export type MappingProps = {
   data: Member[];
@@ -357,7 +358,7 @@ const exportCell = (value: unknown) => {
   return `"${text.replaceAll('"', '""')}"`;
 };
 
-export function RegistrationsPage({ data, user }: MappingProps) {
+export function RegistrationsPage({ data, setData, user }: MappingProps) {
   const [q, setQ] = useState(""),
     [role, setRole] = useState("todos"),
     [status, setStatus] = useState("todos"),
@@ -365,6 +366,7 @@ export function RegistrationsPage({ data, user }: MappingProps) {
     [bairro, setBairro] = useState("todos"),
     [leader, setLeader] = useState("todos"),
     [page, setPage] = useState(1),
+    [deletingId, setDeletingId] = useState(""),
     [message, setMessage] = useState("");
   const pageSize = 50,
     leaderOptions = leaders(data),
@@ -402,6 +404,27 @@ export function RegistrationsPage({ data, user }: MappingProps) {
       setMessage(error instanceof Error ? error.message : "Não foi possível exportar a base.");
     }
   }
+  async function removeRegistration(member: Member) {
+    if (user?.role !== "administrador") return;
+    if (member.hasLogin) {
+      setMessage("Este cadastro possui login ativo. Remova ou desative o acesso antes de excluí-lo.");
+      return;
+    }
+    if (!window.confirm(`Excluir permanentemente o cadastro de ${member.nome}? Esta ação não pode ser desfeita.`)) return;
+    setDeletingId(member.id); setMessage("");
+    try {
+      if (isSupabaseConfigured) await deleteMember(member.id);
+      setData((current) => current.filter((item) => item.id !== member.id));
+      setMessage(`Cadastro de ${member.nome} excluído com sucesso.`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Não foi possível excluir o cadastro.";
+      setMessage(detail.includes("foreign key") || detail.includes("23503")
+        ? "Este cadastro possui vínculos, links ou histórico relacionado e não pode ser excluído. Remova os vínculos primeiro."
+        : detail);
+    } finally {
+      setDeletingId("");
+    }
+  }
   return <>
     <Head title="Base de cadastros" description="Relação consolidada de pessoas visíveis no seu escopo de acesso." action={user?.role === "administrador" ? <button className="secondary" onClick={exportCsv}><Download/>Exportar filtrados</button> : undefined}/>
     <section className="card">
@@ -415,7 +438,7 @@ export function RegistrationsPage({ data, user }: MappingProps) {
       </div>
       <div className="base-summary"><b>{filtered.length}</b> cadastro(s) encontrado(s) de {data.length} visíveis.</div>
       {message && <div className="form-message" role="status">{message}</div>}
-      <div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td>{member.role}</td><td>{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td>{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td>{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td>{member.bairro}<small>{member.municipio}</small></td><td>{member.source ?? "Não informada"}</td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th>{user?.role === "administrador" && <th>Ações</th>}</tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td>{member.role}</td><td>{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td>{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td>{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td>{member.bairro}<small>{member.municipio}</small></td><td>{member.source ?? "Não informada"}</td>{user?.role === "administrador" && <td><button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button></td>}</tr>)}</tbody></table></div>
       {!visible.length && <div className="empty">Nenhum cadastro corresponde aos filtros.</div>}
       <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
     </section>
@@ -554,7 +577,7 @@ export function QuickCreate({ data, setData }: MappingProps) {
             >
               Cancelar
             </button>
-            <button className="primary">Salvar sem criar login</button>
+            <button className="primary">Salvar</button>
           </div>
         </form>
       </section>
