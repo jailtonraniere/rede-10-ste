@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { LinkStatus, Member, RegistrationStatus, Role, SessionUser } from "./types";
-import { confirmed, directMembers, normalizePhone } from "./lib/network";
+import { confirmed, directMembers, formatPhone, normalizePhone } from "./lib/network";
 import {
   duplicateCandidates,
   parseCsv,
@@ -511,7 +511,7 @@ export function QuickCreate({ data, setData }: MappingProps) {
       <section className="card form-card">
         <form className="mapping-form" onSubmit={submit}>
           <Field label="Nome completo" name="nome" required />
-          <Field label="Telefone ou WhatsApp" name="telefone" required />
+          <PhoneField />
           <Field label="E-mail (opcional)" name="email" type="email" autoComplete="email" />
           <CityField />
           <Field label="Bairro ou comunidade" name="bairro" required />
@@ -594,6 +594,22 @@ function Field(
       <input {...rest} />
     </label>
   );
+}
+
+function PhoneField() {
+  return <Field
+    label="Telefone ou WhatsApp"
+    name="telefone"
+    type="tel"
+    inputMode="numeric"
+    autoComplete="tel"
+    placeholder="(81) 99999-9999"
+    maxLength={15}
+    pattern="\\(\\d{2}\\) \\d{4,5}-\\d{4}"
+    title="Informe o DDD e um telefone com 10 ou 11 números."
+    onInput={(event) => { event.currentTarget.value = formatPhone(event.currentTarget.value); }}
+    required
+  />;
 }
 
 function CityField() {
@@ -1224,7 +1240,7 @@ export function PublicCollection({ data, setData }: MappingProps) {
       setSaved((n)=>n+1); setMessage("Pessoa adicionada à base para revisão da coordenação."); form.reset();
     } catch (reason) { const detail=reason instanceof Error?reason.message:"Não foi possível enviar."; setMessage(detail.includes("Cadastro ja existente")?"Este telefone já consta na base.":detail); }
   }
-  return <main className="public-form collection-public"><div className="brand"><span className="brand-mark">40180</span><span><b>TIME 40180</b><small>Cadastro de base</small></span></div><span className="eyebrow">Base de {activeContext.leaderName}</span><h1>Adicionar pessoa</h1><p>Use este formulário para informar pessoas da sua base. O registro não cria login, não representa voto e será revisado pela coordenação.</p><div className="collection-counter"><Users/><span><b>{saved}</b> adicionada(s) nesta sessão</span></div><form onSubmit={submit} className="stack"><Field label="Nome completo" name="nome" required/><Field label="Telefone ou WhatsApp" name="telefone" required/><Field label="E-mail (opcional)" name="email" type="email"/><div className="form-row"><CityField/><Field label="Bairro ou comunidade" name="bairro" required/></div><label>Observação<textarea name="notes" rows={3}/></label><label className="check"><input type="checkbox" name="contactAuthorized"/><span>A pessoa autorizou contato pela equipe. Deixe desmarcado se não houver autorização.</span></label>{message&&<div className="form-message" role="status">{message}</div>}<button className="primary">Adicionar à base de {activeContext.leaderName.split(" ")[0]}</button></form></main>;
+  return <main className="public-form collection-public"><div className="brand"><span className="brand-mark">40180</span><span><b>TIME 40180</b><small>Cadastro de base</small></span></div><span className="eyebrow">Base de {activeContext.leaderName}</span><h1>Adicionar pessoa</h1><p>Use este formulário para informar pessoas da sua base. O registro não cria login, não representa voto e será revisado pela coordenação.</p><div className="collection-counter"><Users/><span><b>{saved}</b> adicionada(s) nesta sessão</span></div><form onSubmit={submit} className="stack"><Field label="Nome completo" name="nome" required/><PhoneField/><Field label="E-mail (opcional)" name="email" type="email"/><div className="form-row"><CityField/><Field label="Bairro ou comunidade" name="bairro" required/></div><label>Observação<textarea name="notes" rows={3}/></label><label className="check"><input type="checkbox" name="contactAuthorized"/><span>A pessoa autorizou contato pela equipe. Deixe desmarcado se não houver autorização.</span></label>{message&&<div className="form-message" role="status">{message}</div>}<button className="primary">Adicionar à base de {activeContext.leaderName.split(" ")[0]}</button></form></main>;
 }
 
 export function TeamUsers() {

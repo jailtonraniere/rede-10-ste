@@ -36,6 +36,7 @@ import {
   confirmed,
   descendants,
   directMembers,
+  formatPhone,
   normalizePhone,
 } from "./lib/network";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
@@ -529,9 +530,15 @@ function Invite() {
               Telefone ou WhatsApp
               <input
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => setPhone(formatPhone(e.target.value))}
+                type="tel"
+                inputMode="numeric"
+                autoComplete="tel"
+                maxLength={15}
+                pattern="\\(\\d{2}\\) \\d{4,5}-\\d{4}"
+                title="Informe o DDD e um telefone com 10 ou 11 números."
                 required
-                placeholder="(71) 99999-9999"
+                placeholder="(81) 99999-9999"
               />
             </label>
             <label className="check">
@@ -871,7 +878,17 @@ function InviteRegistration() {
         </label>
         <label>
           Telefone ou WhatsApp
-          <input required />
+          <input
+            type="tel"
+            inputMode="numeric"
+            autoComplete="tel"
+            maxLength={15}
+            pattern="\\(\\d{2}\\) \\d{4,5}-\\d{4}"
+            title="Informe o DDD e um telefone com 10 ou 11 números."
+            placeholder="(81) 99999-9999"
+            onInput={(event) => { event.currentTarget.value = formatPhone(event.currentTarget.value); }}
+            required
+          />
         </label>
         <div className="form-row">
           <label>
