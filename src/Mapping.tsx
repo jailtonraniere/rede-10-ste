@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   History,
   KeyRound,
+  Pencil,
   Plus,
   Power,
   Search,
@@ -30,9 +31,9 @@ import {
   uniquePeople,
   type CsvRow,
 } from "./lib/mapping";
-import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { isSupabaseConfigured } from "./lib/supabase";
 import { peMunicipalities } from "./data/pe-municipalities";
-import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createMember, createTeamUser, deleteMember, deleteTeamUser, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resetTeamUserPassword, resolveDuplicateReview, saveOperatingMode, setTeamUserActive, submitCollection, updateMember, type ActivityItem, type DuplicateReview, type TeamUser } from "./services/data";
+import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createLeadershipAccess, createMember, createTeamUser, deleteMember, deleteTeamUser, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resetTeamUserPassword, resolveDuplicateReview, saveOperatingMode, setTeamUserActive, submitCollection, updateMember, updateMemberDetails, type ActivityItem, type DuplicateReview, type MemberInput, type TeamUser } from "./services/data";
 
 export type MappingProps = {
   data: Member[];
@@ -360,7 +361,8 @@ const exportCell = (value: unknown) => {
 };
 
 export function RegistrationsPage({ data, setData, user }: MappingProps) {
-  const [q, setQ] = useState(""),
+  const navigate = useNavigate(),
+    [q, setQ] = useState(""),
     [role, setRole] = useState("todos"),
     [status, setStatus] = useState("todos"),
     [municipio, setMunicipio] = useState("todos"),
@@ -439,7 +441,7 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
       </div>
       <div className="base-summary"><b>{filtered.length}</b> cadastro(s) encontrado(s) de {data.length} visíveis.</div>
       {message && <div className="form-message" role="status">{message}</div>}
-      <div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th>{user?.role === "administrador" && <th>Ações</th>}</tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td>{member.role}</td><td>{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td>{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td>{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td>{member.bairro}<small>{member.municipio}</small></td><td>{member.source ?? "Não informada"}</td>{user?.role === "administrador" && <td><button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button></td>}</tr>)}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td>{member.role}</td><td>{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td>{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td>{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td>{member.bairro}<small>{member.municipio}</small></td><td>{member.source ?? "Não informada"}</td><td><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>)}</tbody></table></div>
       {!visible.length && <div className="empty">Nenhum cadastro corresponde aos filtros.</div>}
       <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
     </section>
@@ -585,6 +587,93 @@ export function QuickCreate({ data, setData }: MappingProps) {
     </>
   );
 }
+
+function isDescendantOf(all: Member[], candidateId: string, ancestorId: string) {
+  const visited = new Set<string>();
+  let current = all.find((item) => item.id === candidateId)?.parentId;
+  while (current && !visited.has(current)) {
+    if (current === ancestorId) return true;
+    visited.add(current);
+    current = all.find((item) => item.id === current)?.parentId;
+  }
+  return false;
+}
+
+export function EditRegistration({ data, setData }: MappingProps) {
+  const { id } = useParams(),
+    navigate = useNavigate(),
+    member = data.find((item) => item.id === id),
+    [type, setType] = useState<Role>(member?.role ?? "participante"),
+    [saving, setSaving] = useState(false),
+    [error, setError] = useState("");
+
+  if (!member) return <Head title="Cadastro não encontrado" description="O registro solicitado não está disponível no seu escopo de acesso."/>;
+
+  const editableMember = member,
+    leaderOptions = leaders(data).filter((candidate) => candidate.id !== editableMember.id && !isDescendantOf(data, candidate.id, editableMember.id));
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget),
+      phone = String(form.get("telefone")),
+      input: MemberInput = {
+        nome: String(form.get("nome")),
+        telefone: phone,
+        email: String(form.get("email")) || undefined,
+        municipio: String(form.get("municipio")),
+        bairro: String(form.get("bairro")),
+        role: type,
+        parentId: String(form.get("parentId")) || undefined,
+        status: editableMember.status,
+        registrationStatus: editableMember.registrationStatus,
+        linkStatus: editableMember.linkStatus,
+        source: editableMember.source,
+        contactAuthorized: editableMember.contactAuthorized,
+        needsCandidateMeeting: type === "lideranca" && Boolean(form.get("needsCandidateMeeting")),
+        notes: String(form.get("notes")) || undefined,
+        estimatedCapacity: type === "participante" ? undefined : Number(form.get("capacity")),
+        agreedGoal: type === "participante" ? undefined : Number(form.get("goal")),
+        goalDeadline: editableMember.goalDeadline,
+        confidence: editableMember.confidence,
+        estimateMethod: editableMember.estimateMethod,
+        lastReview: editableMember.lastReview,
+      };
+    setSaving(true); setError("");
+    try {
+      const saved: Member = isSupabaseConfigured ? await updateMemberDetails(editableMember.id, input) : { ...editableMember, ...input, lastActivity:new Date().toISOString().slice(0,10) };
+      setData((current) => current.map((item) => item.id === editableMember.id ? saved : item));
+      navigate(-1);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Não foi possível atualizar o cadastro.";
+      setError(message.includes("network_members_active_phone") || message.includes("network_members_email_unique")
+        ? "Já existe outro cadastro ativo com este telefone ou e-mail."
+        : message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <>
+    <Head title={`Editar ${editableMember.nome}`} description="Atualize os dados do cadastro. Todas as alterações ficam registradas no histórico de auditoria."/>
+    <section className="card form-card">
+      <form className="mapping-form" onSubmit={submit}>
+        <Field label="Nome completo" name="nome" defaultValue={editableMember.nome} required/>
+        <PhoneField defaultValue={formatPhone(editableMember.telefone)}/>
+        <Field label="E-mail (opcional)" name="email" type="email" autoComplete="email" defaultValue={editableMember.email ?? ""}/>
+        <CityField defaultValue={editableMember.municipio}/>
+        <Field label="Bairro ou comunidade" name="bairro" defaultValue={editableMember.bairro} required/>
+        <label>Tipo de pessoa<select value={type} onChange={(event)=>setType(event.target.value as Role)} name="type"><option value="participante">Apoiador</option><option value="lideranca">Liderança principal</option><option value="mobilizador">Mobilizador / pequena liderança</option></select></label>
+        <label>Liderança de referência<select name="parentId" defaultValue={editableMember.parentId ?? ""}><option value="">Sem liderança</option>{leaderOptions.map((leader)=><option value={leader.id} key={leader.id}>{leader.nome}</option>)}</select></label>
+        {type === "lideranca" && <label className="check span-2"><input type="checkbox" name="needsCandidateMeeting" defaultChecked={editableMember.needsCandidateMeeting}/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
+        {type !== "participante" && <><Field label="Capacidade estimada" name="capacity" type="number" min="1" defaultValue={editableMember.estimatedCapacity ?? 1} required/><Field label="Meta inicial acordada" name="goal" type="number" min="1" defaultValue={editableMember.agreedGoal ?? 10} required/></>}
+        <label className="span-2">Observação<textarea name="notes" rows={3} defaultValue={editableMember.notes ?? ""}/></label>
+        {error && <div className="form-message span-2" role="alert">{error}</div>}
+        <div className="form-actions span-2"><button type="button" className="secondary" onClick={()=>navigate(-1)} disabled={saving}>Cancelar</button><button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar alterações"}</button></div>
+      </form>
+    </section>
+  </>;
+}
+
 function Field(
   props: React.InputHTMLAttributes<HTMLInputElement> & { label: string },
 ) {
@@ -597,7 +686,7 @@ function Field(
   );
 }
 
-function PhoneField() {
+function PhoneField({ defaultValue }: { defaultValue?: string } = {}) {
   return <Field
     label="Telefone ou WhatsApp"
     name="telefone"
@@ -608,15 +697,16 @@ function PhoneField() {
     maxLength={15}
     pattern={brazilianPhonePattern}
     title="Informe o DDD e um telefone com 10 ou 11 números."
+    defaultValue={defaultValue}
     onInput={(event) => { event.currentTarget.value = formatPhone(event.currentTarget.value); }}
     required
   />;
 }
 
-function CityField() {
+function CityField({ defaultValue = "Recife" }: { defaultValue?: string } = {}) {
   return <label>
     Cidade
-    <input name="municipio" list="pe-municipalities" defaultValue="Recife" required autoComplete="address-level2" placeholder="Pesquise uma cidade de Pernambuco" />
+    <input name="municipio" list="pe-municipalities" defaultValue={defaultValue} required autoComplete="address-level2" placeholder="Pesquise uma cidade de Pernambuco" />
     <datalist id="pe-municipalities">{peMunicipalities.map((city) => <option value={city} key={city}/>)}</datalist>
   </label>;
 }
@@ -628,7 +718,8 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
     [tab, setTab] = useState("resumo"),
     [notice, setNotice] = useState(""),
     [activities, setActivities] = useState<ActivityItem[]>([]),
-    [credentials, setCredentials] = useState<{username:string;password:string}|null>(null);
+    [credentials, setCredentials] = useState<{username:string;password:string}|null>(null),
+    [busyAction, setBusyAction] = useState("");
   useEffect(() => {
     if (!isSupabaseConfigured || !id) return;
     loadActivities(id).then(setActivities).catch(() => setNotice("Não foi possível carregar as atividades."));
@@ -670,25 +761,30 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
       } catch (error) { setNotice(error instanceof Error ? error.message : "Não foi possível registrar o contato."); }
     }
     if (kind === "gerar-link") {
-      const code = isSupabaseConfigured && user ? await createCollectionLink(member.id, user.profileId) : member.collectionCode ?? `BASE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
-      setData((s) => s.map((x) => x.id === member.id ? { ...x, collectionCode: code } : x));
-      setNotice("Novo link seguro gerado. O anterior foi revogado; copie este link agora.");
+      setBusyAction(kind); setNotice("Gerando link seguro…");
+      try {
+        const code = isSupabaseConfigured && user ? await createCollectionLink(member.id) : member.collectionCode ?? `BASE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+        setData((s) => s.map((x) => x.id === member.id ? { ...x, collectionCode: code } : x));
+        setNotice("Novo link seguro gerado. O anterior foi revogado; copie este link agora.");
+      } catch (error) {
+        setNotice(error instanceof Error ? `Não foi possível gerar o link: ${error.message}` : "Não foi possível gerar o link da base.");
+      } finally { setBusyAction(""); }
     }
     if (kind === "gerar-acesso") {
-      if (isSupabaseConfigured && supabase) {
-        const { data: result, error } = await supabase.functions.invoke("create-leadership-access", { body: { memberId: member.id } });
-        if (error || !result) { setNotice(error?.message ?? "Não foi possível gerar o acesso."); return; }
-        setData((s) => s.map((x) => x.id === member.id ? { ...x, hasLogin: true, accessUsername: result.username, registrationStatus: "ativado" } : x));
-        setCredentials({ username: result.username, password: result.temporaryPassword });
+      setBusyAction(kind); setNotice("Gerando acesso da liderança…");
+      try {
+        let result: { username:string;temporaryPassword:string };
+        if (isSupabaseConfigured) result = await createLeadershipAccess(member.id);
+        else {
+          const base = member.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
+          result = { username:`${base}.${member.id.slice(0, 4)}`, temporaryPassword:`R10-${crypto.randomUUID().slice(0, 8)}!` };
+        }
+        setData((s) => s.map((x) => x.id === member.id ? { ...x, hasLogin:true, accessUsername:result.username, registrationStatus:"ativado" } : x));
+        setCredentials({ username:result.username, password:result.temporaryPassword });
         setNotice("Acesso gerado. A senha temporária é exibida apenas agora.");
-        return;
-      }
-      const base = member.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.|\.$/g, "");
-      const username = `${base}.${member.id.slice(0, 4)}`;
-      const password = `R10-${crypto.randomUUID().slice(0, 8)}!`;
-      setData((s) => s.map((x) => x.id === member.id ? { ...x, hasLogin: true, accessUsername: username, registrationStatus: "ativado" } : x));
-      setCredentials({ username, password });
-      setNotice("Acesso gerado. A senha temporária é exibida apenas agora.");
+      } catch (error) {
+        setNotice(error instanceof Error ? `Não foi possível gerar o acesso: ${error.message}` : "Não foi possível gerar o acesso.");
+      } finally { setBusyAction(""); }
     }
   }
   const collectionUrl = member.collectionCode ? `${location.origin}/coleta/${member.collectionCode}` : "";
@@ -700,12 +796,9 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
         action={
           <button
             className="secondary"
-            onClick={() =>
-              setNotice(
-                "Edição habilitada. Alterações serão auditadas ao salvar.",
-              )
-            }
+            onClick={() => navigate(`/cadastros/${member.id}/editar`)}
           >
+            <Pencil />
             Editar dados
           </button>
         }
@@ -725,9 +818,9 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
           <UserCheck />
           Preparar ativação futura
         </button>
-        <button className="primary" onClick={() => act("gerar-acesso")}>
+        <button className="primary" onClick={() => act("gerar-acesso")} disabled={Boolean(busyAction)}>
           <KeyRound />
-          {member.hasLogin ? "Gerar nova senha" : "Gerar login"}
+          {busyAction === "gerar-acesso" ? "Gerando…" : member.hasLogin ? "Gerar nova senha" : "Gerar login"}
         </button>
       </div>
       {notice && (
@@ -796,9 +889,9 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
                   <Upload />
                   Importar lista
                 </button>
-                <button onClick={() => act("gerar-link")}>
+                <button onClick={() => act("gerar-link")} disabled={Boolean(busyAction)}>
                   <Copy />
-                  {member.collectionCode ? "Ver link da base" : "Gerar link da base"}
+                  {busyAction === "gerar-link" ? "Gerando…" : member.collectionCode ? "Gerar novo link da base" : "Gerar link da base"}
                 </button>
                 <button onClick={() => act("validar")}>
                   <ClipboardCheck />

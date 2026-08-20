@@ -45,6 +45,7 @@ import { loadMembers, loadSessionUser } from "./services/data";
 import type { Member, SessionUser } from "./types";
 import {
   Duplicates,
+  EditRegistration,
   ImportPage,
   LeaderDetail,
   MappingDashboard,
@@ -1017,6 +1018,7 @@ export default function App() {
                 />
                 <Route path="/liderancas" element={isAdmin ? <PeopleList {...mp} /> : <Navigate to="/cadastros" replace />} />
                 <Route path="/cadastros" element={canCreate ? <RegistrationsPage {...mp} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/cadastros/:id/editar" element={canCreate ? <EditRegistration {...mp} /> : <Navigate to="/inicio" replace />} />
                 <Route path="/usuarios" element={isAdmin ? <TeamUsers user={user} /> : <Navigate to="/cadastros" replace />} />
                 <Route
                   path="/liderancas/:id"
