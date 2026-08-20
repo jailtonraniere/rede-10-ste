@@ -313,7 +313,7 @@ function Shell({
             </div>
             <span className="user-label">
               <b>{user.nome}</b>
-              <small>{user.role}</small>
+              <small>{user.isSuperAdmin ? "administrador geral" : user.role}</small>
             </span>
           </div>
         </header>
@@ -1016,7 +1016,7 @@ export default function App() {
                 />
                 <Route path="/liderancas" element={isAdmin ? <PeopleList {...mp} /> : <Navigate to="/cadastros" replace />} />
                 <Route path="/cadastros" element={canCreate ? <RegistrationsPage {...mp} /> : <Navigate to="/inicio" replace />} />
-                <Route path="/usuarios" element={isAdmin ? <TeamUsers /> : <Navigate to="/cadastros" replace />} />
+                <Route path="/usuarios" element={isAdmin ? <TeamUsers user={user} /> : <Navigate to="/cadastros" replace />} />
                 <Route
                   path="/liderancas/:id"
                   element={isAdmin ? <LeaderDetail {...mp} /> : <Navigate to="/cadastros" replace />}

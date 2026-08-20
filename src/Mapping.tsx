@@ -11,6 +11,7 @@ import {
   History,
   KeyRound,
   Plus,
+  Power,
   Search,
   Settings2,
   Trash2,
@@ -31,7 +32,7 @@ import {
 } from "./lib/mapping";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { peMunicipalities } from "./data/pe-municipalities";
-import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createMember, createTeamUser, deleteMember, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resolveDuplicateReview, saveOperatingMode, submitCollection, updateMember, type ActivityItem, type DuplicateReview, type TeamUser } from "./services/data";
+import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createMember, createTeamUser, deleteMember, deleteTeamUser, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resetTeamUserPassword, resolveDuplicateReview, saveOperatingMode, setTeamUserActive, submitCollection, updateMember, type ActivityItem, type DuplicateReview, type TeamUser } from "./services/data";
 
 export type MappingProps = {
   data: Member[];
@@ -1243,16 +1244,26 @@ export function PublicCollection({ data, setData }: MappingProps) {
   return <main className="public-form collection-public"><div className="brand"><span className="brand-mark">40180</span><span><b>TIME 40180</b><small>Cadastro de base</small></span></div><span className="eyebrow">Base de {activeContext.leaderName}</span><h1>Adicionar pessoa</h1><p>Use este formulário para informar pessoas da sua base. O registro não cria login, não representa voto e será revisado pela coordenação.</p><div className="collection-counter"><Users/><span><b>{saved}</b> adicionada(s) nesta sessão</span></div><form onSubmit={submit} className="stack"><Field label="Nome completo" name="nome" required/><PhoneField/><Field label="E-mail (opcional)" name="email" type="email"/><div className="form-row"><CityField/><Field label="Bairro ou comunidade" name="bairro" required/></div><label>Observação<textarea name="notes" rows={3}/></label><label className="check"><input type="checkbox" name="contactAuthorized"/><span>A pessoa autorizou contato pela equipe. Deixe desmarcado se não houver autorização.</span></label>{message&&<div className="form-message" role="status">{message}</div>}<button className="primary">Adicionar à base de {activeContext.leaderName.split(" ")[0]}</button></form></main>;
 }
 
-export function TeamUsers() {
-  const [users, setUsers] = useState<TeamUser[]>([]), [loading, setLoading] = useState(true),
-    [message, setMessage] = useState(""), [credentials, setCredentials] = useState<{username:string;password:string}|null>(null);
+export function TeamUsers({ user }: { user: SessionUser }) {
+  const [users, setUsers] = useState<TeamUser[]>([]),
+    [loading, setLoading] = useState(true),
+    [busyAction, setBusyAction] = useState(""),
+    [message, setMessage] = useState(""),
+    [credentials, setCredentials] = useState<{username:string;password:string}|null>(null);
   async function refresh() {
     setLoading(true);
     try { setUsers(await loadTeamUsers()); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível carregar a equipe."); }
     finally { setLoading(false); }
   }
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    let active = true;
+    loadTeamUsers()
+      .then((result) => { if (active) setUsers(result); })
+      .catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "Não foi possível carregar a equipe."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault(); setMessage(""); setCredentials(null);
     const form = e.currentTarget, values = new FormData(form);
@@ -1264,15 +1275,45 @@ export function TeamUsers() {
     } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível criar o usuário."); }
   }
   async function changeRole(profileId:string, role:'administrador'|'cadastrador') {
-    setMessage("");
+    setMessage(""); setBusyAction(`role:${profileId}`);
     try { await changeTeamUserRole(profileId,role); setMessage("Perfil atualizado e registrado na auditoria."); await refresh(); }
     catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível alterar o perfil."); }
+    finally { setBusyAction(""); }
+  }
+  async function manage(teamUser: TeamUser, action: 'reset'|'status'|'delete') {
+    const isActive = teamUser.status !== "bloqueado";
+    const prompt = action === "reset"
+      ? `Gerar uma nova senha temporária para ${teamUser.name}?`
+      : action === "delete"
+        ? `Excluir o acesso de ${teamUser.name}? O histórico dos cadastros será preservado.`
+        : `${isActive ? "Inativar" : "Reativar"} o acesso de ${teamUser.name}?`;
+    if (!window.confirm(prompt)) return;
+    setBusyAction(`${action}:${teamUser.id}`); setMessage(""); setCredentials(null);
+    try {
+      if (action === "reset") {
+        const result = await resetTeamUserPassword(teamUser.id);
+        setCredentials({ username:result.username, password:result.temporaryPassword });
+        setMessage("Nova senha temporária gerada. Copie agora; ela não será exibida novamente.");
+      } else if (action === "delete") {
+        await deleteTeamUser(teamUser.id);
+        setMessage(`Acesso de ${teamUser.name} excluído. O histórico foi preservado.`);
+      } else {
+        await setTeamUserActive(teamUser.id, !isActive);
+        setMessage(`Acesso de ${teamUser.name} ${isActive ? "inativado" : "reativado"}.`);
+      }
+      await refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível concluir a ação.");
+    } finally {
+      setBusyAction("");
+    }
   }
   return <>
-    <Head title="Usuários da equipe" description="Crie acessos para cadastradores ou conceda visão administrativa completa."/>
+    <Head title="Usuários da equipe" description={user.isSuperAdmin ? "Você é o Administrador geral e pode gerenciar acessos e senhas da equipe." : "Crie acessos para cadastradores ou conceda visão administrativa completa."}/>
+    {message&&<div className="form-message" role="status">{message}</div>}
     <div className="two-col team-users-layout">
-      <section className="card"><h2>Criar usuário</h2><p>O usuário receberá uma senha temporária e deverá trocá-la no primeiro acesso.</p><form className="stack" onSubmit={submit}><Field label="Nome da pessoa" name="name" required/><Field label="Nome de usuário ou e-mail" name="login" required placeholder="Ex.: maria.silva ou maria@exemplo.com"/><label>Perfil<select name="role" defaultValue="cadastrador"><option value="cadastrador">Cadastrador — vê somente o que cadastrar</option><option value="administrador">Administrador — vê toda a base</option></select></label><button className="primary"><KeyRound/>Criar acesso</button></form>{message&&<div className="form-message" role="status">{message}</div>}{credentials&&<div className="credentials-card"><label>Login<code>{credentials.username}</code></label><label>Senha temporária<code>{credentials.password}</code></label><button className="secondary" onClick={()=>navigator.clipboard?.writeText(`Login: ${credentials.username}\nSenha: ${credentials.password}`)}><Copy/>Copiar credenciais</button></div>}</section>
-      <section className="card"><div className="section-head"><div><h2>Equipe com acesso</h2><p>{users.length} usuário(s) ativo(s).</p></div></div>{loading?<div className="empty">Carregando equipe…</div>:<div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Login</th><th>Perfil</th><th>Situação</th></tr></thead><tbody>{users.map((teamUser)=><tr key={teamUser.id}><td><b>{teamUser.name}</b><small>Desde {new Date(teamUser.createdAt).toLocaleDateString("pt-BR")}</small></td><td>{teamUser.username ?? teamUser.email ?? "—"}</td><td><select value={teamUser.role} onChange={(e)=>void changeRole(teamUser.id,e.target.value as 'administrador'|'cadastrador')}><option value="cadastrador">Cadastrador</option><option value="administrador">Administrador</option></select></td><td><Pill tone="green">{teamUser.status}</Pill></td></tr>)}</tbody></table></div>}</section>
+      <section className="card"><h2>Criar usuário</h2><p>O usuário receberá uma senha temporária e deverá trocá-la no primeiro acesso.</p><form className="stack" onSubmit={submit}><Field label="Nome da pessoa" name="name" required/><Field label="Nome de usuário ou e-mail" name="login" required placeholder="Ex.: maria.silva ou maria@exemplo.com"/><label>Perfil<select name="role" defaultValue="cadastrador"><option value="cadastrador">Cadastrador — vê somente o que cadastrar</option><option value="administrador">Administrador — vê toda a base</option></select></label><button className="primary"><KeyRound/>Criar acesso</button></form>{credentials&&<div className="credentials-card"><label>Login<code>{credentials.username}</code></label><label>Senha temporária<code>{credentials.password}</code></label><button className="secondary" onClick={()=>navigator.clipboard?.writeText(`Login: ${credentials.username}\nSenha: ${credentials.password}`)}><Copy/>Copiar credenciais</button></div>}</section>
+      <section className="card team-list"><div className="section-head"><div><h2>Equipe com acesso</h2><p>{users.length} usuário(s) cadastrado(s).</p></div></div>{loading?<div className="empty">Carregando equipe…</div>:<div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Login</th><th>Perfil</th><th>Situação</th>{user.isSuperAdmin&&<th>Ações</th>}</tr></thead><tbody>{users.map((teamUser)=><tr key={teamUser.id}><td><b>{teamUser.name}{teamUser.isSuperAdmin&&<Pill tone="green">Geral</Pill>}</b><small>Desde {new Date(teamUser.createdAt).toLocaleDateString("pt-BR")}</small></td><td>{teamUser.username ?? teamUser.email ?? "—"}</td><td><select value={teamUser.role} disabled={teamUser.isSuperAdmin||busyAction===`role:${teamUser.id}`} onChange={(e)=>void changeRole(teamUser.id,e.target.value as 'administrador'|'cadastrador')}><option value="cadastrador">Cadastrador</option><option value="administrador">Administrador</option></select></td><td><Pill tone={teamUser.status==="bloqueado"?"warning":"green"}>{teamUser.status==="bloqueado"?"Inativo":"Ativo"}</Pill></td>{user.isSuperAdmin&&<td><div className="team-actions"><button className="team-action" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"reset")}><KeyRound/>Resetar senha</button>{!teamUser.isSuperAdmin&&<><button className="team-action" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"status")}><Power/>{teamUser.status==="bloqueado"?"Reativar":"Inativar"}</button><button className="team-action danger" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"delete")}><Trash2/>Excluir</button></>}</div></td>}</tr>)}</tbody></table></div>}</section>
     </div>
   </>;
 }
