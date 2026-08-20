@@ -31,6 +31,7 @@ import {
   type CsvRow,
 } from "./lib/mapping";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { peMunicipalities } from "./data/pe-municipalities";
 import { bulkCreateMembers, createActivity, createCollectionLink, createMember, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, recordExportAudit, resolveDuplicateReview, saveOperatingMode, submitCollection, updateMember, type ActivityItem, type DuplicateReview } from "./services/data";
 
 export type MappingProps = {
@@ -320,6 +321,7 @@ export function PeopleList({ data }: MappingProps) {
                 <th>Meta</th>
                 <th>Vínculos</th>
                 <th>Cadastro</th>
+                <th>Reunião</th>
                 <th>Acesso</th>
               </tr>
             </thead>
@@ -347,6 +349,7 @@ export function PeopleList({ data }: MappingProps) {
                       {regLabels[m.registrationStatus ?? "pendente_revisao"]}
                     </Pill>
                   </td>
+                  <td>{m.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td>
                   <td>
                     {m.hasLogin ? (
                       <Pill tone="green">Ativado</Pill>
@@ -404,8 +407,8 @@ export function RegistrationsPage({ data, user }: MappingProps) {
     setMessage("");
     try {
       if (isSupabaseConfigured) await recordExportAudit(filtered.length, { busca:q, tipo:role, cadastro:status, municipio, bairro, lideranca:leader });
-      const header = ["Nome","Telefone","E-mail","Tipo","Situação do cadastro","Situação do vínculo","Liderança de referência","Município","Bairro","Origem","Criado em","Última atividade"],
-        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome,member.municipio,member.bairro,member.source,member.joinedAt,member.lastActivity]),
+      const header = ["Nome","Telefone","E-mail","Tipo","Precisa reunião com a candidata","Situação do cadastro","Situação do vínculo","Liderança de referência","Município","Bairro","Origem","Criado em","Última atividade"],
+        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.needsCandidateMeeting ? "Sim" : "Não",member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome,member.municipio,member.bairro,member.source,member.joinedAt,member.lastActivity]),
         csv = `\uFEFF${[header,...rows].map((row) => row.map(exportCell).join(";")).join("\r\n")}`,
         url = URL.createObjectURL(new Blob([csv], { type:"text/csv;charset=utf-8" })),
         anchor = document.createElement("a");
@@ -428,7 +431,7 @@ export function RegistrationsPage({ data, user }: MappingProps) {
       </div>
       <div className="base-summary"><b>{filtered.length}</b> cadastro(s) encontrado(s) de {data.length} visíveis.</div>
       {message && <div className="form-message" role="status">{message}</div>}
-      <div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Tipo</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td>{member.role}</td><td><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td>{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td>{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td>{member.bairro}<small>{member.municipio}</small></td><td>{member.source ?? "Não informada"}</td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td>{member.role}</td><td>{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td>{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td>{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td>{member.bairro}<small>{member.municipio}</small></td><td>{member.source ?? "Não informada"}</td></tr>)}</tbody></table></div>
       {!visible.length && <div className="empty">Nenhum cadastro corresponde aos filtros.</div>}
       <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
     </section>
@@ -448,6 +451,7 @@ export function QuickCreate({ data, setData }: MappingProps) {
         {
           nome: String(f.get("nome")),
           telefone: phone,
+          email: String(f.get("email")) || undefined,
           bairro: String(f.get("bairro")),
         },
         data,
@@ -462,13 +466,14 @@ export function QuickCreate({ data, setData }: MappingProps) {
       id: crypto.randomUUID(),
       nome: String(f.get("nome")),
       telefone: phone,
+      email: String(f.get("email")) || undefined,
       municipio: String(f.get("municipio")),
       bairro: String(f.get("bairro")),
       role: type,
       parentId: String(f.get("parentId")) || undefined,
-      coordinator: String(f.get("coordinator")),
-      source: String(f.get("source")),
-      linkStatus: String(f.get("linkStatus")) as LinkStatus,
+      source: "Cadastro administrativo",
+      linkStatus: "nao_informado",
+      needsCandidateMeeting: type === "lideranca" && Boolean(f.get("needsCandidateMeeting")),
       notes: String(f.get("notes")),
       estimatedCapacity:
         type === "participante" ? undefined : Number(f.get("capacity")),
@@ -500,7 +505,8 @@ export function QuickCreate({ data, setData }: MappingProps) {
         <form className="mapping-form" onSubmit={submit}>
           <Field label="Nome completo" name="nome" required />
           <Field label="Telefone ou WhatsApp" name="telefone" required />
-          <Field label="Município" name="municipio" required />
+          <Field label="E-mail (opcional)" name="email" type="email" autoComplete="email" />
+          <CityField />
           <Field label="Bairro ou comunidade" name="bairro" required />
           <label>
             Tipo de pessoa
@@ -527,31 +533,7 @@ export function QuickCreate({ data, setData }: MappingProps) {
               ))}
             </select>
           </label>
-          <Field
-            label="Coordenador responsável"
-            name="coordinator"
-            placeholder="Nome do coordenador"
-          />
-          <label>
-            Origem dos dados
-            <select name="source">
-              <option>Base territorial 2026</option>
-              <option>Reunião comunitária</option>
-              <option>Informado pela liderança</option>
-              <option>Outra base autorizada</option>
-            </select>
-          </label>
-          <label>
-            Situação do vínculo
-            <select name="linkStatus">
-              <option value="nao_informado">Não informado</option>
-              <option value="informado_lideranca">
-                Informado pela liderança
-              </option>
-              <option value="em_validacao">Em validação</option>
-              <option value="confirmado_pessoa">Confirmado pela pessoa</option>
-            </select>
-          </label>
+          {type === "lideranca" && <label className="check span-2"><input type="checkbox" name="needsCandidateMeeting"/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
           {type !== "participante" && (
             <>
               <Field
@@ -605,6 +587,14 @@ function Field(
       <input {...rest} />
     </label>
   );
+}
+
+function CityField() {
+  return <label>
+    Cidade
+    <input name="municipio" list="pe-municipalities" defaultValue="Recife" required autoComplete="address-level2" placeholder="Pesquise uma cidade de Pernambuco" />
+    <datalist id="pe-municipalities">{peMunicipalities.map((city) => <option value={city} key={city}/>)}</datalist>
+  </label>;
 }
 
 export function LeaderDetail({ data, setData, user }: MappingProps) {
@@ -885,6 +875,10 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
             <div>
               <dt>Contato autorizado</dt>
               <dd>{m.contactAuthorized ? "Sim" : "Não presumido"}</dd>
+            </div>
+            <div>
+              <dt>Reunião com a candidata</dt>
+              <dd>{m.needsCandidateMeeting ? "Solicitada" : "Não solicitada"}</dd>
             </div>
             <div>
               <dt>Observações</dt>
@@ -1223,7 +1217,7 @@ export function PublicCollection({ data, setData }: MappingProps) {
       setSaved((n)=>n+1); setMessage("Pessoa adicionada à base para revisão da coordenação."); form.reset();
     } catch (reason) { const detail=reason instanceof Error?reason.message:"Não foi possível enviar."; setMessage(detail.includes("Cadastro ja existente")?"Este telefone já consta na base.":detail); }
   }
-  return <main className="public-form collection-public"><div className="brand"><span className="brand-mark">40180</span><span><b>TIME 40180</b><small>Cadastro de base</small></span></div><span className="eyebrow">Base de {activeContext.leaderName}</span><h1>Adicionar pessoa</h1><p>Use este formulário para informar pessoas da sua base. O registro não cria login, não representa voto e será revisado pela coordenação.</p><div className="collection-counter"><Users/><span><b>{saved}</b> adicionada(s) nesta sessão</span></div><form onSubmit={submit} className="stack"><Field label="Nome completo" name="nome" required/><Field label="Telefone ou WhatsApp" name="telefone" required/><Field label="E-mail (opcional)" name="email" type="email"/><div className="form-row"><Field label="Município" name="municipio" required/><Field label="Bairro ou comunidade" name="bairro" required/></div><label>Observação<textarea name="notes" rows={3}/></label><label className="check"><input type="checkbox" name="contactAuthorized"/><span>A pessoa autorizou contato pela equipe. Deixe desmarcado se não houver autorização.</span></label>{message&&<div className="form-message" role="status">{message}</div>}<button className="primary">Adicionar à base de {activeContext.leaderName.split(" ")[0]}</button></form></main>;
+  return <main className="public-form collection-public"><div className="brand"><span className="brand-mark">40180</span><span><b>TIME 40180</b><small>Cadastro de base</small></span></div><span className="eyebrow">Base de {activeContext.leaderName}</span><h1>Adicionar pessoa</h1><p>Use este formulário para informar pessoas da sua base. O registro não cria login, não representa voto e será revisado pela coordenação.</p><div className="collection-counter"><Users/><span><b>{saved}</b> adicionada(s) nesta sessão</span></div><form onSubmit={submit} className="stack"><Field label="Nome completo" name="nome" required/><Field label="Telefone ou WhatsApp" name="telefone" required/><Field label="E-mail (opcional)" name="email" type="email"/><div className="form-row"><CityField/><Field label="Bairro ou comunidade" name="bairro" required/></div><label>Observação<textarea name="notes" rows={3}/></label><label className="check"><input type="checkbox" name="contactAuthorized"/><span>A pessoa autorizou contato pela equipe. Deixe desmarcado se não houver autorização.</span></label>{message&&<div className="form-message" role="status">{message}</div>}<button className="primary">Adicionar à base de {activeContext.leaderName.split(" ")[0]}</button></form></main>;
 }
 
 export function ModeSettings({user}:{user:SessionUser}) {
