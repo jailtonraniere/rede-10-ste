@@ -68,9 +68,9 @@ export async function loadMembers(): Promise<Member[]> {
   return (data ?? []).map((row) => memberFromRow(row as MemberRow))
 }
 
-type NewMember = Omit<Member, 'id'|'joinedAt'|'lastActivity'|'inviteCode'|'hasLogin'>
+export type MemberInput = Omit<Member, 'id'|'joinedAt'|'lastActivity'|'inviteCode'|'hasLogin'|'collectionCode'|'accessUsername'>
 
-function memberPayload(input: NewMember) {
+export function memberPayload(input: MemberInput) {
   const role = input.role
   return {
     nome: input.nome.trim(), telefone_normalizado: normalizePhone(input.telefone), email: input.email || null,
@@ -78,13 +78,16 @@ function memberPayload(input: NewMember) {
     status: input.status, participation_type: role === 'mobilizador' ? 'mobilizador' : 'participante', member_role: role,
     registration_status: input.registrationStatus ?? 'pendente_revisao', link_status: input.linkStatus ?? 'nao_informado',
     data_source: input.source || null, contact_authorized: input.contactAuthorized ?? false, internal_notes: input.notes || null,
-    needs_candidate_meeting: input.needsCandidateMeeting ?? false,
-    estimated_capacity: input.estimatedCapacity || null, agreed_goal: input.agreedGoal || null, goal_deadline: input.goalDeadline || null,
-    estimate_confidence: input.confidence || null, estimate_method: input.estimateMethod || null,
+    needs_candidate_meeting: role === 'lideranca' && (input.needsCandidateMeeting ?? false),
+    estimated_capacity: role === 'participante' ? null : input.estimatedCapacity || null,
+    agreed_goal: role === 'participante' ? null : input.agreedGoal || null,
+    goal_deadline: role === 'participante' ? null : input.goalDeadline || null,
+    estimate_confidence: role === 'participante' ? null : input.confidence || null,
+    estimate_method: role === 'participante' ? null : input.estimateMethod || null,
   }
 }
 
-export async function createMember(input: NewMember): Promise<Member> {
+export async function createMember(input: MemberInput): Promise<Member> {
   const payload = memberPayload(input)
   const { data, error } = await requireClient().from('network_members').insert(payload).select('*').single()
   if (error) throw error
@@ -93,6 +96,12 @@ export async function createMember(input: NewMember): Promise<Member> {
 
 export async function updateMember(id: string, changes: Record<string, unknown>): Promise<Member> {
   const { data, error } = await requireClient().from('network_members').update(changes).eq('id', id).select('*').single()
+  if (error) throw error
+  return memberFromRow(data as MemberRow)
+}
+
+export async function updateMemberDetails(id: string, input: MemberInput): Promise<Member> {
+  const { data, error } = await requireClient().from('network_members').update(memberPayload(input)).eq('id', id).select('*').single()
   if (error) throw error
   return memberFromRow(data as MemberRow)
 }
@@ -108,7 +117,7 @@ export async function deleteMember(id: string): Promise<void> {
   if (!data) throw new Error('Você não tem permissão para excluir este cadastro.')
 }
 
-export async function bulkCreateMembers(items: NewMember[]): Promise<Member[]> {
+export async function bulkCreateMembers(items: MemberInput[]): Promise<Member[]> {
   if (!items.length) return []
   const { data, error } = await requireClient().from('network_members').insert(items.map(memberPayload)).select('*')
   if (error) throw error
@@ -193,6 +202,29 @@ export async function resetTeamUserPassword(profileId:string) {
   return data as {username:string;temporaryPassword:string}
 }
 
+async function functionErrorMessage(error: unknown, fallback: string) {
+  if (error && typeof error === 'object' && 'context' in error) {
+    const context = (error as { context?: unknown }).context
+    if (context instanceof Response) {
+      try {
+        const payload = await context.clone().json() as { error?: unknown }
+        if (typeof payload.error === 'string' && payload.error) return payload.error
+      } catch {
+        // A resposta pode não ser JSON; nesse caso usamos a mensagem do cliente.
+      }
+    }
+  }
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
+export async function createLeadershipAccess(memberId: string) {
+  const { data, error } = await requireClient().functions.invoke('create-leadership-access', { body:{ memberId } })
+  if (error) throw new Error(await functionErrorMessage(error, 'Não foi possível gerar o acesso.'))
+  if (data?.error) throw new Error(String(data.error))
+  if (!data?.username || !data?.temporaryPassword) throw new Error('O acesso foi criado sem retornar as credenciais.')
+  return data as { username:string;temporaryPassword:string;authUserId:string }
+}
+
 export async function loadOperatingMode(): Promise<'mapeamento'|'mobilizacao'> {
   const { data, error } = await requireClient().from('app_settings').select('value').eq('key', 'operating_mode').single()
   if (error) throw error
@@ -208,15 +240,15 @@ function base64Url(bytes: Uint8Array) {
   return btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')
 }
 
-export async function createCollectionLink(leaderId: string, profileId: string) {
+export async function createCollectionLink(leaderId: string) {
   const client = requireClient()
   const tokenBytes = crypto.getRandomValues(new Uint8Array(32))
   const token = base64Url(tokenBytes)
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
   const tokenHash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2,'0')).join('')
-  await client.from('collection_links').update({ active:false, revoked_at:new Date().toISOString() }).eq('leader_member_id',leaderId).eq('active',true)
-  const { error } = await client.from('collection_links').insert({ leader_member_id:leaderId, token_hash:tokenHash, created_by:profileId })
+  const { data, error } = await client.rpc('rotate_collection_link', { p_leader_member_id:leaderId, p_token_hash:tokenHash })
   if (error) throw error
+  if (!data) throw new Error('O banco não confirmou a criação do link.')
   return token
 }
 
