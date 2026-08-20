@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   Copy,
+  Download,
   FileSpreadsheet,
   History,
   KeyRound,
@@ -30,7 +31,7 @@ import {
   type CsvRow,
 } from "./lib/mapping";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import { bulkCreateMembers, createActivity, createCollectionLink, createMember, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, resolveDuplicateReview, saveOperatingMode, submitCollection, updateMember, type ActivityItem, type DuplicateReview } from "./services/data";
+import { bulkCreateMembers, createActivity, createCollectionLink, createMember, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, recordExportAudit, resolveDuplicateReview, saveOperatingMode, submitCollection, updateMember, type ActivityItem, type DuplicateReview } from "./services/data";
 
 export type MappingProps = {
   data: Member[];
@@ -108,6 +109,10 @@ function Stat({
 }
 
 export function MappingDashboard({ data }: MappingProps) {
+  const [mode, setMode] = useState<"mapeamento" | "mobilizacao">("mobilizacao");
+  useEffect(() => {
+    if (isSupabaseConfigured) loadOperatingMode().then(setMode).catch(() => setMode("mobilizacao"));
+  }, []);
   const unique = uniquePeople(data),
     ls = leaders(data),
     supporters = data.filter((m) => m.role === "participante"),
@@ -117,21 +122,18 @@ export function MappingDashboard({ data }: MappingProps) {
     navigate = useNavigate();
   return (
     <>
-      <div className="mode-banner">
+      <div className={`mode-banner ${mode === "mobilizacao" ? "active" : ""}`}>
         <ShieldCheck />
         <div>
-          <b>Etapa de organização e validação</b>
-          <span>
-            Os registros ainda não possuem acesso. Convites e links estão
-            desabilitados.
-          </span>
+          <b>{mode === "mobilizacao" ? "Operação ativa para lideranças" : "Etapa de organização e validação"}</b>
+          <span>{mode === "mobilizacao" ? "Logins de lideranças e links para cadastro da base estão liberados." : "Novos acessos e links ficam pausados até a liberação administrativa."}</span>
         </div>
-        <Pill tone="warning">
-          <Link2Off /> Convites pausados
+        <Pill tone={mode === "mobilizacao" ? "green" : "warning"}>
+          {mode === "mobilizacao" ? <><CheckCircle2 /> Links liberados</> : <><Link2Off /> Acessos pausados</>}
         </Pill>
       </div>
       <Head
-        title="Visão geral do mapeamento"
+        title="Visão geral operacional"
         description="Acompanhe a qualidade da base sem confundir estimativas com resultados reais."
         action={
           <button
@@ -360,6 +362,77 @@ export function PeopleList({ data }: MappingProps) {
       </section>
     </>
   );
+}
+
+const exportCell = (value: unknown) => {
+  let text = String(value ?? "");
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+};
+
+export function RegistrationsPage({ data, user }: MappingProps) {
+  const [q, setQ] = useState(""),
+    [role, setRole] = useState("todos"),
+    [status, setStatus] = useState("todos"),
+    [municipio, setMunicipio] = useState("todos"),
+    [bairro, setBairro] = useState("todos"),
+    [leader, setLeader] = useState("todos"),
+    [page, setPage] = useState(1),
+    [message, setMessage] = useState("");
+  const pageSize = 50,
+    leaderOptions = leaders(data),
+    municipalities = [...new Set(data.map((m) => m.municipio))].sort(),
+    neighborhoods = [...new Set(data.filter((m) => municipio === "todos" || m.municipio === municipio).map((m) => m.bairro))].sort();
+  const filtered = data.filter((member) => {
+    const query = q.trim().toLocaleLowerCase("pt-BR"),
+      leaderName = data.find((item) => item.id === member.parentId)?.nome ?? "";
+    return (!query || [member.nome, member.telefone, member.email, member.municipio, member.bairro, leaderName].some((value) => value?.toLocaleLowerCase("pt-BR").includes(query)))
+      && (role === "todos" || member.role === role)
+      && (status === "todos" || member.registrationStatus === status)
+      && (municipio === "todos" || member.municipio === municipio)
+      && (bairro === "todos" || member.bairro === bairro)
+      && (leader === "todos" || member.parentId === leader);
+  });
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize)),
+    currentPage = Math.min(page, pages),
+    visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  function change(setter: (value: string) => void, value: string) {
+    setter(value); setPage(1);
+  }
+  async function exportCsv() {
+    if (user?.role !== "administrador") return;
+    setMessage("");
+    try {
+      if (isSupabaseConfigured) await recordExportAudit(filtered.length, { busca:q, tipo:role, cadastro:status, municipio, bairro, lideranca:leader });
+      const header = ["Nome","Telefone","E-mail","Tipo","Situação do cadastro","Situação do vínculo","Liderança de referência","Município","Bairro","Origem","Criado em","Última atividade"],
+        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome,member.municipio,member.bairro,member.source,member.joinedAt,member.lastActivity]),
+        csv = `\uFEFF${[header,...rows].map((row) => row.map(exportCell).join(";")).join("\r\n")}`,
+        url = URL.createObjectURL(new Blob([csv], { type:"text/csv;charset=utf-8" })),
+        anchor = document.createElement("a");
+      anchor.href = url; anchor.download = `rede-10-cadastros-${new Date().toISOString().slice(0,10)}.csv`; anchor.click(); URL.revokeObjectURL(url);
+      setMessage(`${filtered.length} cadastro(s) exportado(s); ação registrada na auditoria.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Não foi possível exportar a base.");
+    }
+  }
+  return <>
+    <Head title="Base de cadastros" description="Relação consolidada de pessoas visíveis no seu escopo de acesso." action={user?.role === "administrador" ? <button className="secondary" onClick={exportCsv}><Download/>Exportar filtrados</button> : undefined}/>
+    <section className="card">
+      <div className="filters registrations-filters">
+        <label className="search"><Search/><input aria-label="Buscar cadastros" value={q} onChange={(e)=>change(setQ,e.target.value)} placeholder="Nome, telefone, e-mail, local ou liderança"/></label>
+        <select aria-label="Filtrar por tipo" value={role} onChange={(e)=>change(setRole,e.target.value)}><option value="todos">Todos os tipos</option><option value="lideranca">Lideranças</option><option value="mobilizador">Mobilizadores</option><option value="participante">Apoiadores</option></select>
+        <select aria-label="Filtrar por cadastro" value={status} onChange={(e)=>change(setStatus,e.target.value)}><option value="todos">Todas as situações</option>{Object.entries(regLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>
+        <select aria-label="Filtrar por município" value={municipio} onChange={(e)=>{change(setMunicipio,e.target.value);setBairro("todos")}}><option value="todos">Todos os municípios</option>{municipalities.map((value)=><option key={value}>{value}</option>)}</select>
+        <select aria-label="Filtrar por bairro" value={bairro} onChange={(e)=>change(setBairro,e.target.value)}><option value="todos">Todos os bairros</option>{neighborhoods.map((value)=><option key={value}>{value}</option>)}</select>
+        <select aria-label="Filtrar por liderança" value={leader} onChange={(e)=>change(setLeader,e.target.value)}><option value="todos">Todas as lideranças</option>{leaderOptions.map((value)=><option key={value.id} value={value.id}>{value.nome}</option>)}</select>
+      </div>
+      <div className="base-summary"><b>{filtered.length}</b> cadastro(s) encontrado(s) de {data.length} visíveis.</div>
+      {message && <div className="form-message" role="status">{message}</div>}
+      <div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Tipo</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td>{member.role}</td><td><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td>{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td>{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td>{member.bairro}<small>{member.municipio}</small></td><td>{member.source ?? "Não informada"}</td></tr>)}</tbody></table></div>
+      {!visible.length && <div className="empty">Nenhum cadastro corresponde aos filtros.</div>}
+      <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
+    </section>
+  </>;
 }
 
 export function QuickCreate({ data, setData }: MappingProps) {
@@ -1154,22 +1227,22 @@ export function PublicCollection({ data, setData }: MappingProps) {
 }
 
 export function ModeSettings({user}:{user:SessionUser}) {
-  const [mode, setMode] = useState<"mapeamento" | "mobilizacao">("mapeamento"), [message,setMessage]=useState("");
+  const [mode, setMode] = useState<"mapeamento" | "mobilizacao">("mobilizacao"), [message,setMessage]=useState("");
   useEffect(()=>{ if(isSupabaseConfigured) loadOperatingMode().then(setMode).catch(()=>setMessage("Não foi possível carregar a configuração.")); },[]);
   async function changeMode(next:'mapeamento'|'mobilizacao') { try { if(isSupabaseConfigured) await saveOperatingMode(next,user.profileId); setMode(next); setMessage("Configuração salva."); } catch(reason){setMessage(reason instanceof Error?reason.message:"Não foi possível salvar.");} }
   return (
     <>
       <Head
         title="Configuração da etapa"
-        description="A mudança futura exige decisão administrativa e revisão das permissões."
+        description="Controle a liberação de acessos e links para as lideranças."
       />
       <section className="card setting-card">
         <Settings2 />
         <div>
           <h2>Modo operacional</h2>
           <p>
-            No Modo Mapeamento, somente administração e coordenação autorizada
-            acessam a base. Pessoas cadastradas não recebem login ou convite.
+            Em Mobilização, a administração pode gerar login para lideranças e
+            links seguros para que elas cadastrem suas bases.
           </p>
         </div>
         <label>
@@ -1180,24 +1253,23 @@ export function ModeSettings({user}:{user:SessionUser}) {
           />
           <span>
             <b>Mapeamento</b>
-            <small>Ativo e recomendado nesta etapa</small>
+            <small>Pausa a geração operacional de novos acessos e links</small>
           </span>
         </label>
         {message&&<div className="form-message" role="status">{message}</div>}
-        <label className="disabled">
+        <label>
           <input
             type="radio"
-            disabled
             checked={mode === "mobilizacao"}
-            onChange={() => setMode("mobilizacao")}
+            onChange={() => void changeMode("mobilizacao")}
           />
           <span>
             <b>Mobilização</b>
-            <small>Bloqueado até homologação e liberação administrativa</small>
+            <small>Logins de lideranças e links de cadastro liberados</small>
           </span>
         </label>
         <div className="mode-checklist">
-          <b>Preparado para a próxima etapa</b>
+          <b>Controles disponíveis na etapa ativa</b>
           <span>
             <CheckCircle2 />
             Selecionar lideranças validadas

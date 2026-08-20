@@ -134,6 +134,11 @@ export async function createActivity(memberId: string, profileId: string, descri
   return { id:data.id, type:data.activity_type, description:data.description ?? undefined, occurredAt:data.occurred_at }
 }
 
+export async function recordExportAudit(count: number, filters: Record<string, string>) {
+  const { error } = await requireClient().rpc('record_members_export', { p_count:count, p_filters:filters })
+  if (error) throw error
+}
+
 export async function loadOperatingMode(): Promise<'mapeamento'|'mobilizacao'> {
   const { data, error } = await requireClient().from('app_settings').select('value').eq('key', 'operating_mode').single()
   if (error) throw error

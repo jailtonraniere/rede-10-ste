@@ -47,6 +47,7 @@ import {
   MappingDashboard,
   ModeSettings,
   PeopleList,
+  RegistrationsPage,
   PublicCollection,
   QuickCreate,
 } from "./Mapping";
@@ -240,6 +241,7 @@ function Shell({
     [open, setOpen] = useState(false);
   const mappingItems = [
     ["/mapeamento", "Visão geral", BarChart3],
+    ["/cadastros", "Base de cadastros", FileSpreadsheet],
     ["/liderancas", "Lideranças", Users],
     ["/cadastro-rapido", "Cadastro rápido", UserPlus],
     ["/importar", "Importar base", FileSpreadsheet],
@@ -266,7 +268,7 @@ function Shell({
         {(user.role === "administrador" || user.role === "coordenador") && (
           <div className="side-mode">
             <i />
-            Modo Mapeamento
+            Operação ativa
           </div>
         )}
         <nav aria-label="Principal">
@@ -931,11 +933,10 @@ function DisabledInvite() {
   return (
     <main className="public-form success">
       <Link2Off />
-      <span className="eyebrow">Modo Mapeamento</span>
-      <h1>Convites ainda não estão disponíveis</h1>
+      <span className="eyebrow">Link antigo</span>
+      <h1>Este convite não está disponível</h1>
       <p>
-        A campanha está organizando e validando sua base interna. Nenhum
-        cadastro ou acesso é liberado por este link nesta etapa.
+        Solicite à coordenação um link atualizado de cadastro da base.
       </p>
       <a className="secondary" href="/">
         Voltar
@@ -1005,6 +1006,7 @@ export default function App() {
                   element={canManage ? <MappingDashboard {...mp} /> : <Navigate to="/inicio" replace />}
                 />
                 <Route path="/liderancas" element={canManage ? <PeopleList {...mp} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/cadastros" element={canManage ? <RegistrationsPage {...mp} /> : <Navigate to="/inicio" replace />} />
                 <Route
                   path="/liderancas/:id"
                   element={canManage ? <LeaderDetail {...mp} /> : <Navigate to="/inicio" replace />}

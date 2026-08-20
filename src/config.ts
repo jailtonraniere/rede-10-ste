@@ -4,6 +4,6 @@ export const appConfig = {
   goal: 10,
   supportEmail: 'jailtonmjc@gmail.com',
   inactivityDays: 21,
-  operatingMode: 'mapeamento' as 'mapeamento' | 'mobilizacao',
-  invitationsEnabled: false,
+  operatingMode: 'mobilizacao' as 'mapeamento' | 'mobilizacao',
+  invitationsEnabled: true,
 }
