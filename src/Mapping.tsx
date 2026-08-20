@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { LinkStatus, Member, RegistrationStatus, Role, SessionUser } from "./types";
-import { confirmed, directMembers, formatPhone, normalizePhone } from "./lib/network";
+import { brazilianPhonePattern, confirmed, directMembers, formatPhone, normalizePhone } from "./lib/network";
 import {
   duplicateCandidates,
   parseCsv,
@@ -606,7 +606,7 @@ function PhoneField() {
     autoComplete="tel"
     placeholder="(81) 99999-9999"
     maxLength={15}
-    pattern="\\(\\d{2}\\) \\d{4,5}-\\d{4}"
+    pattern={brazilianPhonePattern}
     title="Informe o DDD e um telefone com 10 ou 11 números."
     onInput={(event) => { event.currentTarget.value = formatPhone(event.currentTarget.value); }}
     required
