@@ -16,6 +16,7 @@ import {
   EyeOff,
   FileSpreadsheet,
   Home,
+  KeyRound,
   Link2,
   Link2Off,
   ListTree,
@@ -30,7 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { appConfig } from "./config";
-import { adminUser, demoUser, members, statuses } from "./data/demo";
+import { statuses } from "./data/demo";
 import {
   confirmed,
   descendants,
@@ -50,6 +51,7 @@ import {
   RegistrationsPage,
   PublicCollection,
   QuickCreate,
+  TeamUsers,
 } from "./Mapping";
 
 const Status = ({ value }: { value: string }) => (
@@ -69,10 +71,10 @@ function Logo() {
 
 function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   const [email, setEmail] = useState(
-      isSupabaseConfigured ? "" : "admin@rede10.demo",
+      "",
     ),
     [password, setPassword] = useState(
-      isSupabaseConfigured ? "" : "rede10demo",
+      "",
     ),
     [show, setShow] = useState(false),
     [busy, setBusy] = useState(false),
@@ -97,12 +99,7 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
           setMessage("Seu acesso ainda não foi vinculado a um perfil. Procure a administração.");
         }
       }
-    } else {
-      setTimeout(
-        () => onLogin(email.startsWith("admin") ? adminUser : demoUser),
-        350,
-      );
-    }
+    } else setMessage("Serviço de autenticação não configurado. Procure a administração.");
     setBusy(false);
   }
   async function reset() {
@@ -113,8 +110,7 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
         redirectTo: `${location.origin}/nova-senha`,
       });
       setMessage(error?.message ?? "Confira sua caixa de entrada.");
-    } else
-      setMessage("Demonstração: link de recuperação simulado com sucesso.");
+    } else setMessage("Serviço de autenticação indisponível.");
   }
   return (
     <main className="login-page">
@@ -142,15 +138,6 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
           <span className="eyebrow">Bem-vinda de volta</span>
           <h2>Acesse sua rede</h2>
           <p>Entre com o login gerado pela administração ou com seu e-mail.</p>
-          {!isSupabaseConfigured && (
-            <div className="demo-note">
-              <b>Modo demonstração</b>
-              <span>
-                Use os dados já preenchidos. Para o painel administrativo,
-                troque o e-mail por admin@rede10.demo.
-              </span>
-            </div>
-          )}
           <form onSubmit={submit}>
             <label>
               Login ou e-mail
@@ -244,14 +231,13 @@ function Shell({
     ["/cadastros", "Base de cadastros", FileSpreadsheet],
     ["/liderancas", "Lideranças", Users],
     ["/cadastro-rapido", "Cadastro rápido", UserPlus],
+    ["/usuarios", "Usuários da equipe", KeyRound],
     ["/importar", "Importar base", FileSpreadsheet],
     ["/duplicidades", "Duplicidades", ShieldCheck],
     ["/configuracoes", "Configuração", Settings],
   ] as const;
-  const items =
-    user.role === "administrador" || user.role === "coordenador"
-      ? mappingItems
-      : nav;
+  const registrarItems = [["/cadastro-rapido", "Novo cadastro", UserPlus], ["/cadastros", "Meus cadastros", FileSpreadsheet]] as const;
+  const items = user.role === "administrador" ? mappingItems : user.role === "cadastrador" ? registrarItems : nav;
   return (
     <div className="app-shell">
       <aside className={open ? "open" : ""}>
@@ -265,7 +251,7 @@ function Shell({
             <X />
           </button>
         </div>
-        {(user.role === "administrador" || user.role === "coordenador") && (
+        {user.role === "administrador" && (
           <div className="side-mode">
             <i />
             Operação ativa
@@ -486,7 +472,7 @@ function Invite() {
   function create(e: React.FormEvent) {
     e.preventDefault();
     const normalized = normalizePhone(phone);
-    if (members.some((m) => normalizePhone(m.telefone) === normalized))
+    if (!normalized)
       return setMsg(
         "Este telefone já possui cadastro ou convite ativo. Nenhum registro foi criado.",
       );
@@ -947,7 +933,7 @@ function DisabledInvite() {
 
 export default function App() {
   const [user, setUser] = useState<SessionUser | null>(null),
-    [mappingData, setMappingData] = useState<Member[]>(isSupabaseConfigured ? [] : members),
+    [mappingData, setMappingData] = useState<Member[]>([]),
     [authLoading, setAuthLoading] = useState(isSupabaseConfigured),
     [dataLoading, setDataLoading] = useState(false),
     [dataError, setDataError] = useState("");
@@ -984,7 +970,7 @@ export default function App() {
   if (authLoading) return <LoadingScreen />;
   if (user && dataLoading) return <LoadingScreen />;
   if (user && dataError) return <main className="public-form success"><h1>Não foi possível carregar a base</h1><p>{dataError}</p><button className="primary" onClick={refreshMembers}>Tentar novamente</button></main>;
-  const canManage = user?.role === "administrador" || user?.role === "coordenador";
+  const isAdmin = user?.role === "administrador", canCreate = isAdmin || user?.role === "cadastrador";
   return (
     <Routes>
       <Route path="/privacidade" element={<Privacy />} />
@@ -1003,21 +989,22 @@ export default function App() {
               <Routes>
                 <Route
                   path="/mapeamento"
-                  element={canManage ? <MappingDashboard {...mp} /> : <Navigate to="/inicio" replace />}
+                  element={isAdmin ? <MappingDashboard {...mp} /> : <Navigate to="/cadastros" replace />}
                 />
-                <Route path="/liderancas" element={canManage ? <PeopleList {...mp} /> : <Navigate to="/inicio" replace />} />
-                <Route path="/cadastros" element={canManage ? <RegistrationsPage {...mp} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/liderancas" element={isAdmin ? <PeopleList {...mp} /> : <Navigate to="/cadastros" replace />} />
+                <Route path="/cadastros" element={canCreate ? <RegistrationsPage {...mp} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/usuarios" element={isAdmin ? <TeamUsers /> : <Navigate to="/cadastros" replace />} />
                 <Route
                   path="/liderancas/:id"
-                  element={canManage ? <LeaderDetail {...mp} /> : <Navigate to="/inicio" replace />}
+                  element={isAdmin ? <LeaderDetail {...mp} /> : <Navigate to="/cadastros" replace />}
                 />
                 <Route
                   path="/cadastro-rapido"
-                  element={canManage ? <QuickCreate {...mp} /> : <Navigate to="/inicio" replace />}
+                  element={canCreate ? <QuickCreate {...mp} /> : <Navigate to="/inicio" replace />}
                 />
-                <Route path="/importar" element={canManage ? <ImportPage {...mp} /> : <Navigate to="/inicio" replace />} />
-                <Route path="/duplicidades" element={canManage ? <Duplicates {...mp} /> : <Navigate to="/inicio" replace />} />
-                <Route path="/configuracoes" element={canManage && user ? <ModeSettings user={user} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/importar" element={isAdmin ? <ImportPage {...mp} /> : <Navigate to="/cadastros" replace />} />
+                <Route path="/duplicidades" element={isAdmin ? <Duplicates {...mp} /> : <Navigate to="/cadastros" replace />} />
+                <Route path="/configuracoes" element={isAdmin && user ? <ModeSettings user={user} /> : <Navigate to="/cadastros" replace />} />
                 <Route path="/inicio" element={<Dashboard user={user} data={mappingData} />} />
                 <Route path="/rede" element={<Network user={user} data={mappingData} />} />
                 <Route path="/arvore" element={<Tree user={user} data={mappingData} />} />
@@ -1026,10 +1013,9 @@ export default function App() {
                   element={
                     <Navigate
                       to={
-                        user.role === "administrador" ||
-                        user.role === "coordenador"
+                        user.role === "administrador"
                           ? "/mapeamento"
-                          : "/inicio"
+                          : user.role === "cadastrador" ? "/cadastros" : "/inicio"
                       }
                       replace
                     />
