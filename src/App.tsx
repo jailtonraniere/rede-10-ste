@@ -56,10 +56,10 @@ const Status = ({ value }: { value: string }) => (
 function Logo() {
   return (
     <div className="brand">
-      <span className="brand-mark">10</span>
+      <span className="brand-mark">40180</span>
       <span>
-        <b>{appConfig.name}</b>
-        <small>Ste Vilela</small>
+        <b>TIME 40180</b>
+        <small>Ste Vilela · {appConfig.name}</small>
       </span>
     </div>
   );
@@ -145,7 +145,7 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
       <section className="login-visual">
         <Logo />
         <div className="visual-copy">
-          <span className="eyebrow">Mobilização responsável</span>
+          <span className="eyebrow">Ste Vilela · 40180</span>
           <h1>Uma rede feita de pessoas, vínculos e confiança.</h1>
           <p>
             Acompanhe o crescimento da sua rede sem confundir participação com
