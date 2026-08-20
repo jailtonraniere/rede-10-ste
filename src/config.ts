@@ -2,8 +2,8 @@ export const appConfig = {
   name: 'Rede 10',
   descriptor: 'Mobilização com cuidado e transparência',
   goal: 10,
-  supportEmail: 'privacidade@exemplo.org',
+  supportEmail: 'jailtonmjc@gmail.com',
   inactivityDays: 21,
-  operatingMode: 'mapeamento' as 'mapeamento' | 'mobilizacao',
-  invitationsEnabled: false,
+  operatingMode: 'mobilizacao' as 'mapeamento' | 'mobilizacao',
+  invitationsEnabled: true,
 }

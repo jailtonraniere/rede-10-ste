@@ -1,7 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2.112.3";
 
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+const frontendUrl = Deno.env.get("FRONTEND_URL") ?? "https://rede-10-ste-vilela.vercel.app";
+const cors = { "Access-Control-Allow-Origin": frontendUrl, "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type", "Vary": "Origin" };
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" } });
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -25,11 +26,11 @@ Deno.serve(async (req) => {
   if (member.profile_id) {
     const { data, error } = await admin.from("profiles").select("auth_user_id").eq("id", member.profile_id).single();
     if (error || !data) return json({ error: "Perfil de acesso inválido" }, 409);
-    const updated = await admin.auth.admin.updateUserById(data.auth_user_id, { password });
+    const updated = await admin.auth.admin.updateUserById(data.auth_user_id, { password, user_metadata: { must_change_password: true } });
     if (updated.error) return json({ error: updated.error.message }, 400);
     authUserId = data.auth_user_id;
   } else {
-    const created = await admin.auth.admin.createUser({ email, password, email_confirm: true, app_metadata: { role: "lideranca" } });
+    const created = await admin.auth.admin.createUser({ email, password, email_confirm: true, app_metadata: { role: "lideranca" }, user_metadata: { must_change_password: true } });
     if (created.error || !created.data.user) return json({ error: created.error?.message ?? "Falha ao criar usuário" }, 400);
     authUserId = created.data.user.id;
     const profile = await admin.from("profiles").insert({ auth_user_id: authUserId, nome: member.nome, email, telefone: member.telefone_normalizado, municipio: member.municipio, bairro: member.bairro, role: "lideranca", status: "cadastrado" }).select("id").single();
