@@ -7,6 +7,7 @@ export function descendants(all: Member[], root: string): Member[] {
 }
 export const confirmed = (m: Member) => ['cadastrado','mobilizador_ativo','meta_alcancada'].includes(m.status)
 export function normalizePhone(value: string) { return value.replace(/\D/g, '').replace(/^0+/, '') }
+export const brazilianPhonePattern = String.raw`\(\d{2}\) \d{4,5}-\d{4}`
 export function formatPhone(value: string) {
   const digits = value.replace(/\D/g, '').slice(0, 11)
   if (!digits) return ''

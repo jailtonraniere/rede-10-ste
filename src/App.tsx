@@ -33,6 +33,7 @@ import {
 import { appConfig } from "./config";
 import { statuses } from "./data/demo";
 import {
+  brazilianPhonePattern,
   confirmed,
   descendants,
   directMembers,
@@ -535,7 +536,7 @@ function Invite() {
                 inputMode="numeric"
                 autoComplete="tel"
                 maxLength={15}
-                pattern="\\(\\d{2}\\) \\d{4,5}-\\d{4}"
+                pattern={brazilianPhonePattern}
                 title="Informe o DDD e um telefone com 10 ou 11 números."
                 required
                 placeholder="(81) 99999-9999"
@@ -883,7 +884,7 @@ function InviteRegistration() {
             inputMode="numeric"
             autoComplete="tel"
             maxLength={15}
-            pattern="\\(\\d{2}\\) \\d{4,5}-\\d{4}"
+            pattern={brazilianPhonePattern}
             title="Informe o DDD e um telefone com 10 ou 11 números."
             placeholder="(81) 99999-9999"
             onInput={(event) => { event.currentTarget.value = formatPhone(event.currentTarget.value); }}
