@@ -10,11 +10,9 @@ import {
   FileSpreadsheet,
   History,
   KeyRound,
-  Link2Off,
   Plus,
   Search,
   Settings2,
-  ShieldCheck,
   Upload,
   UserCheck,
   Users,
@@ -110,10 +108,6 @@ function Stat({
 }
 
 export function MappingDashboard({ data }: MappingProps) {
-  const [mode, setMode] = useState<"mapeamento" | "mobilizacao">("mobilizacao");
-  useEffect(() => {
-    if (isSupabaseConfigured) loadOperatingMode().then(setMode).catch(() => setMode("mobilizacao"));
-  }, []);
   const unique = uniquePeople(data),
     ls = leaders(data),
     supporters = data.filter((m) => m.role === "participante"),
@@ -123,16 +117,6 @@ export function MappingDashboard({ data }: MappingProps) {
     navigate = useNavigate();
   return (
     <>
-      <div className={`mode-banner ${mode === "mobilizacao" ? "active" : ""}`}>
-        <ShieldCheck />
-        <div>
-          <b>{mode === "mobilizacao" ? "Operação ativa para lideranças" : "Etapa de organização e validação"}</b>
-          <span>{mode === "mobilizacao" ? "Logins de lideranças e links para cadastro da base estão liberados." : "Novos acessos e links ficam pausados até a liberação administrativa."}</span>
-        </div>
-        <Pill tone={mode === "mobilizacao" ? "green" : "warning"}>
-          {mode === "mobilizacao" ? <><CheckCircle2 /> Links liberados</> : <><Link2Off /> Acessos pausados</>}
-        </Pill>
-      </div>
       <Head
         title="Visão geral operacional"
         description="Acompanhe a qualidade da base sem confundir estimativas com resultados reais."
