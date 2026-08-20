@@ -141,6 +141,27 @@ export async function recordExportAudit(count: number, filters: Record<string, s
   if (error) throw error
 }
 
+export type TeamUser = { id:string; name:string; email?:string; username?:string; role:'administrador'|'cadastrador'; status:string; createdAt:string }
+
+export async function loadTeamUsers(): Promise<TeamUser[]> {
+  const { data, error } = await requireClient().from('profiles').select('id,nome,email,username,role,status,created_at').in('role',['administrador','cadastrador']).order('created_at')
+  if (error) throw error
+  return (data ?? []).map((row) => ({ id:row.id, name:row.nome, email:row.email ?? undefined, username:row.username ?? undefined, role:row.role, status:row.status, createdAt:row.created_at }))
+}
+
+export async function createTeamUser(input: {name:string;login:string;role:'administrador'|'cadastrador'}) {
+  const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'create', ...input } })
+  if (error) throw error
+  if (data?.error) throw new Error(data.error)
+  return data as {profileId:string;username:string;temporaryPassword:string;role:'administrador'|'cadastrador'}
+}
+
+export async function changeTeamUserRole(profileId:string, role:'administrador'|'cadastrador') {
+  const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'update-role', profileId, role } })
+  if (error) throw error
+  if (data?.error) throw new Error(data.error)
+}
+
 export async function loadOperatingMode(): Promise<'mapeamento'|'mobilizacao'> {
   const { data, error } = await requireClient().from('app_settings').select('value').eq('key', 'operating_mode').single()
   if (error) throw error

@@ -1,4 +1,4 @@
-export type Role = 'administrador' | 'coordenador' | 'lideranca' | 'mobilizador' | 'participante'
+export type Role = 'administrador' | 'cadastrador' | 'coordenador' | 'lideranca' | 'mobilizador' | 'participante'
 export type Status = 'convidado' | 'cadastro_iniciado' | 'cadastrado' | 'mobilizador_pendente' | 'mobilizador_ativo' | 'meta_alcancada' | 'inativo' | 'desligado' | 'bloqueado'
 export type RegistrationStatus = 'importado'|'pendente_revisao'|'revisado'|'pronto_ativacao'|'ativado'|'inativo'|'duplicado'|'desligado'
 export type LinkStatus = 'nao_informado'|'informado_lideranca'|'em_validacao'|'confirmado_pessoa'|'recusado'|'encerrado'
