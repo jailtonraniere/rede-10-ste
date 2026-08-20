@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -19,22 +19,24 @@ import {
   Users,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { LinkStatus, Member, RegistrationStatus, Role } from "./types";
+import type { LinkStatus, Member, RegistrationStatus, Role, SessionUser } from "./types";
 import { confirmed, directMembers, normalizePhone } from "./lib/network";
 import {
   duplicateCandidates,
   parseCsv,
   prepareActivation,
   realization,
-  transferMember,
   uniquePeople,
   type CsvRow,
 } from "./lib/mapping";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+import { bulkCreateMembers, createActivity, createCollectionLink, createMember, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, resolveDuplicateReview, saveOperatingMode, submitCollection, updateMember, type ActivityItem, type DuplicateReview } from "./services/data";
 
 export type MappingProps = {
   data: Member[];
   setData: React.Dispatch<React.SetStateAction<Member[]>>;
+  user: SessionUser | null;
+  refresh: () => Promise<void>;
 };
 const regLabels: Record<RegistrationStatus, string> = {
   importado: "Importado",
@@ -181,7 +183,7 @@ export function MappingDashboard({ data }: MappingProps) {
           <div className="attention">
             <Attention
               tone="red"
-              title="1 possível duplicidade"
+              title={`${data.filter((m) => m.registrationStatus === "duplicado").length} possível(is) duplicidade(s)`}
               text="Telefone já encontrado em outro registro"
               onClick={() => navigate("/duplicidades")}
             />
@@ -197,7 +199,7 @@ export function MappingDashboard({ data }: MappingProps) {
             />
             <Attention
               tone="amber"
-              title="2 vínculos em validação"
+              title={`${data.filter((m) => m.linkStatus === "em_validacao").length} vínculo(s) em validação`}
               text="Aguardando confirmação da pessoa"
             />
           </div>
@@ -364,7 +366,7 @@ export function QuickCreate({ data, setData }: MappingProps) {
   const navigate = useNavigate(),
     [type, setType] = useState<Role>("participante"),
     [error, setError] = useState("");
-  function submit(e: React.FormEvent<HTMLFormElement>) {
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget),
       phone = String(f.get("telefone"));
@@ -406,9 +408,14 @@ export function QuickCreate({ data, setData }: MappingProps) {
       inviteCode: "",
       hasLogin: false,
     };
-    setData((s) => [...s, m]);
-    if (!isDuplicate)
-      navigate(type === "participante" ? "/mapeamento" : `/liderancas/${m.id}`);
+    try {
+      const saved = isSupabaseConfigured ? await createMember({ ...m, registrationStatus: isDuplicate ? "duplicado" : "pendente_revisao" }) : m;
+      setData((s) => [...s, saved]);
+      if (!isDuplicate) navigate(type === "participante" ? "/mapeamento" : `/liderancas/${saved.id}`);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Não foi possível salvar o cadastro.";
+      setError(message.includes("network_members_active_phone") ? "Este telefone já consta na base." : message);
+    }
   }
   return (
     <>
@@ -527,13 +534,18 @@ function Field(
   );
 }
 
-export function LeaderDetail({ data, setData }: MappingProps) {
+export function LeaderDetail({ data, setData, user }: MappingProps) {
   const { id } = useParams(),
     navigate = useNavigate(),
     m = data.find((x) => x.id === id),
     [tab, setTab] = useState("resumo"),
     [notice, setNotice] = useState(""),
+    [activities, setActivities] = useState<ActivityItem[]>([]),
     [credentials, setCredentials] = useState<{username:string;password:string}|null>(null);
+  useEffect(() => {
+    if (!isSupabaseConfigured || !id) return;
+    loadActivities(id).then(setActivities).catch(() => setNotice("Não foi possível carregar as atividades."));
+  }, [id]);
   if (!m)
     return (
       <Head
@@ -547,22 +559,33 @@ export function LeaderDetail({ data, setData }: MappingProps) {
     goal = m.agreedGoal ?? 10;
   async function act(kind: string) {
     if (kind === "ativar") {
-      setData((s) => prepareActivation(s, member.id));
+      if (isSupabaseConfigured) {
+        const saved = await updateMember(member.id, { registration_status:"pronto_ativacao", activation_ready_at:new Date().toISOString() });
+        setData((s) => s.map((x) => x.id === member.id ? saved : x));
+      } else setData((s) => prepareActivation(s, member.id));
       setNotice("Registro preparado. Nenhum convite foi enviado.");
     }
     if (kind === "validar") {
-      setData((s) =>
-        s.map((x) =>
-          x.id === member.id ? { ...x, linkStatus: "confirmado_pessoa" } : x,
-        ),
-      );
+      if (isSupabaseConfigured) {
+        const saved = await updateMember(member.id, { link_status:"confirmado_pessoa", last_reviewed_at:new Date().toISOString() });
+        setData((s) => s.map((x) => x.id === member.id ? saved : x));
+      } else setData((s) => s.map((x) => x.id === member.id ? { ...x, linkStatus: "confirmado_pessoa" } : x));
       setNotice("Vínculo marcado como validado e registrado no histórico.");
     }
     if (kind === "adicionar") navigate("/cadastro-rapido");
+    if (kind === "contato" && user) {
+      try {
+        const activity = isSupabaseConfigured
+          ? await createActivity(member.id, user.profileId, "Contato registrado pela equipe.")
+          : { id:crypto.randomUUID(), type:"contato", description:"Contato registrado pela equipe.", occurredAt:new Date().toISOString() };
+        setActivities((current) => [activity, ...current]);
+        setNotice("Contato registrado com responsável e horário.");
+      } catch (error) { setNotice(error instanceof Error ? error.message : "Não foi possível registrar o contato."); }
+    }
     if (kind === "gerar-link") {
-      const code = member.collectionCode ?? `BASE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+      const code = isSupabaseConfigured && user ? await createCollectionLink(member.id, user.profileId) : member.collectionCode ?? `BASE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
       setData((s) => s.map((x) => x.id === member.id ? { ...x, collectionCode: code } : x));
-      setNotice("Link de cadastro da base gerado. Ele não cria login nem libera o painel da liderança.");
+      setNotice("Novo link seguro gerado. O anterior foi revogado; copie este link agora.");
     }
     if (kind === "gerar-acesso") {
       if (isSupabaseConfigured && supabase) {
@@ -694,11 +717,7 @@ export function LeaderDetail({ data, setData }: MappingProps) {
                   <ClipboardCheck />
                   Validar vínculo
                 </button>
-                <button
-                  onClick={() =>
-                    setNotice("Atividade registrada no histórico fictício.")
-                  }
-                >
+                  <button onClick={() => act("contato")}>
                   <History />
                   Registrar contato
                 </button>
@@ -802,19 +821,19 @@ export function LeaderDetail({ data, setData }: MappingProps) {
         </section>
       )}
       {tab === "atividades" && (
-        <section className="card empty">
-          Nenhuma atividade registrada. Use “Registrar contato” para adicionar.
+        <section className={`card ${activities.length ? "timeline" : "empty"}`}>
+          {activities.length ? activities.map((activity) => <div key={activity.id}><b>{activity.description ?? activity.type}</b><span>{new Date(activity.occurredAt).toLocaleString("pt-BR")}</span></div>) : "Nenhuma atividade registrada. Use “Registrar contato” para adicionar."}
         </section>
       )}
       {tab === "historico" && (
         <section className="card timeline">
           <div>
-            <b>Cadastro revisado</b>
-            <span>10/08/2026 · Camila Rocha</span>
+            <b>Última atualização registrada</b>
+            <span>{new Date(m.lastActivity + "T12:00").toLocaleDateString("pt-BR")}</span>
           </div>
           <div>
-            <b>Registro criado a partir de base interna</b>
-            <span>18/07/2026 · Sistema</span>
+            <b>Cadastro criado</b>
+            <span>{new Date(m.joinedAt + "T12:00").toLocaleDateString("pt-BR")} · {m.source ?? "Origem não informada"}</span>
           </div>
         </section>
       )}
@@ -846,13 +865,9 @@ export function ImportPage({ data, setData }: MappingProps) {
       (m) => normalizePhone(m.telefone) === normalizePhone(r.telefone ?? ""),
     ),
   }));
-  function finish() {
+  async function finish() {
     const valid = analyzed.filter((r) => !r.invalid && !r.duplicate);
-    setData((s) => [
-      ...s,
-      ...valid.map(
-        (r, i): Member => ({
-          id: crypto.randomUUID(),
+    const pending: Array<Omit<Member,'id'|'joinedAt'|'lastActivity'|'inviteCode'|'hasLogin'>> = valid.map((r, i) => ({
           nome: r.row.nome || `Registro ${i + 1}`,
           telefone: r.row.telefone,
           municipio: r.row.municipio || "Não informado",
@@ -863,13 +878,15 @@ export function ImportPage({ data, setData }: MappingProps) {
           registrationStatus: "importado",
           linkStatus: "informado_lideranca",
           source: `Importação: ${name}`,
-          joinedAt: new Date().toISOString().slice(0, 10),
-          lastActivity: new Date().toISOString().slice(0, 10),
-          inviteCode: "",
-          hasLogin: false,
-        }),
-      ),
-    ]);
+        }));
+    try {
+      const saved = isSupabaseConfigured ? await bulkCreateMembers(pending) : pending.map((m) => ({ ...m, id:crypto.randomUUID(), joinedAt:new Date().toISOString().slice(0,10), lastActivity:new Date().toISOString().slice(0,10), inviteCode:"", hasLogin:false } as Member));
+      setData((s) => [...s, ...saved]);
+    } catch {
+      setReport({ ok:0, review:analyzed.filter((r)=>r.duplicate).length, rejected:analyzed.filter((r)=>r.invalid).length + valid.length });
+      setStep(3);
+      return;
+    }
     setReport({
       ok: valid.length,
       review: analyzed.filter((r) => r.duplicate).length,
@@ -1003,7 +1020,8 @@ export function ImportPage({ data, setData }: MappingProps) {
           </div>
           <p>
             A base “{name}” foi registrada com data, responsável e origem. O
-            lote pode ser desfeito enquanto os registros não forem alterados.
+            processamento é atômico: em caso de erro, nenhum registro válido é
+            gravado parcialmente.
           </p>
           <button
             className="secondary"
@@ -1021,31 +1039,23 @@ export function ImportPage({ data, setData }: MappingProps) {
   );
 }
 
-export function Duplicates({ data, setData }: MappingProps) {
-  const base = data[1],
-    fake = {
-      ...base,
-      id: "dup-review",
-      nome: "Ana S. Souza",
-      source: "Base reunião agosto",
-      registrationStatus: "duplicado" as const,
-    };
-  const [resolved, setResolved] = useState(false);
-  function merge() {
-    setData((s) =>
-      s.map((m) =>
-        m.id === base.id
-          ? {
-              ...m,
-              notes: [m.notes, "Unificado com registro da base reunião agosto"]
-                .filter(Boolean)
-                .join(" · "),
-              registrationStatus: "revisado",
-            }
-          : m,
-      ),
-    );
-    setResolved(true);
+export function Duplicates({ data, user }: MappingProps) {
+  const [reviews, setReviews] = useState<DuplicateReview[]>([]),
+    [loading, setLoading] = useState(isSupabaseConfigured),
+    [message, setMessage] = useState("");
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    loadDuplicateReviews().then(setReviews).catch(() => setMessage("Não foi possível carregar a fila de duplicidades.")).finally(() => setLoading(false));
+  }, []);
+  const review = reviews[0], base = review ? data.find((m) => m.id === review.memberAId) : undefined,
+    candidate = review ? data.find((m) => m.id === review.memberBId) : undefined;
+  async function resolve(status: Exclude<DuplicateReview['status'], 'pendente'>) {
+    if (!review || !user?.profileId) return;
+    try {
+      await resolveDuplicateReview(review.id, status, user.profileId, `Resolvido como ${status} pela interface administrativa.`);
+      setReviews((current) => current.filter((item) => item.id !== review.id));
+      setMessage("Conflito resolvido e registrado no histórico.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Não foi possível resolver o conflito."); }
   }
   return (
     <>
@@ -1053,15 +1063,15 @@ export function Duplicates({ data, setData }: MappingProps) {
         title="Revisão de duplicidades"
         description="Conflitos nunca são excluídos ou unificados automaticamente."
       />
-      {resolved ? (
+      {message && <div className="form-message" role="status">{message}</div>}
+      {loading ? (
+        <section className="card"><p>Carregando fila…</p></section>
+      ) : !review || !base || !candidate ? (
         <section className="card success-inline">
           <CheckCircle2 />
           <div>
-            <h2>Conflito resolvido</h2>
-            <p>
-              Os registros foram unificados com histórico preservado e uma única
-              contagem.
-            </p>
+            <h2>Nenhuma duplicidade pendente</h2>
+            <p>A fila de revisão está em dia.</p>
           </div>
         </section>
       ) : (
@@ -1083,28 +1093,26 @@ export function Duplicates({ data, setData }: MappingProps) {
           </div>
           <div className="card">
             <Pill tone="danger">Registro importado</Pill>
-            <h2>{fake.nome}</h2>
+            <h2>{candidate.nome}</h2>
             <p>
-              {fake.telefone}
+              {candidate.telefone}
               <br />
-              {fake.bairro} · {fake.municipio}
+              {candidate.bairro} · {candidate.municipio}
               <br />
-              Origem: {fake.source}
+              Origem: {candidate.source ?? "Cadastro manual"}
             </p>
           </div>
           <div className="duplicate-actions">
-            <button className="primary" onClick={merge}>
+            <button className="primary" onClick={() => resolve("unificado")} disabled={user?.role !== "administrador"}>
               Unificar cadastros
             </button>
-            <button className="secondary" onClick={() => setResolved(true)}>
+            <button className="secondary" onClick={() => resolve("separados")} disabled={user?.role !== "administrador"}>
               Manter separados
             </button>
             <button
               className="secondary"
-              onClick={() => {
-                setData((s) => transferMember(s, base.id, "m3"));
-                setResolved(true);
-              }}
+              onClick={() => resolve("transferido")}
+              disabled={user?.role !== "administrador"}
             >
               Transferir liderança
             </button>
@@ -1117,26 +1125,38 @@ export function Duplicates({ data, setData }: MappingProps) {
 
 export function PublicCollection({ data, setData }: MappingProps) {
   const { code } = useParams();
-  const leader = data.find((m) => m.collectionCode === code && (m.role === "lideranca" || m.role === "mobilizador"));
-  const [message, setMessage] = useState("");
-  const [saved, setSaved] = useState(0);
-  if (!leader) return <main className="public-form success"><AlertTriangle/><h1>Link indisponível</h1><p>Este link de cadastro não existe ou foi desativado. Solicite um novo link à coordenação.</p></main>;
-  const currentLeader = leader;
-  function submit(e: React.FormEvent<HTMLFormElement>) {
+  const localLeader = data.find((m) => m.collectionCode === code && (m.role === "lideranca" || m.role === "mobilizador"));
+  const [context, setContext] = useState<{leaderId:string;leaderName:string}|null>(localLeader ? {leaderId:localLeader.id,leaderName:localLeader.nome} : null);
+  const [loading, setLoading] = useState(isSupabaseConfigured), [message, setMessage] = useState(""), [saved, setSaved] = useState(0);
+  useEffect(() => {
+    if (!isSupabaseConfigured || !code) return;
+    getCollectionContext(code).then(setContext).catch(()=>setContext(null)).finally(()=>setLoading(false));
+  }, [code]);
+  if (loading) return <main className="public-form success"><h1>Validando link…</h1></main>;
+  if (!context) return <main className="public-form success"><AlertTriangle/><h1>Link indisponível</h1><p>Este link de cadastro não existe ou foi desativado. Solicite um novo link à coordenação.</p></main>;
+  const activeContext = context;
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = e.currentTarget;
     const f = new FormData(form);
     const candidate = { nome: String(f.get("nome")), telefone: String(f.get("telefone")), bairro: String(f.get("bairro")) };
-    if (duplicateCandidates(candidate, data).length) { setMessage("Este telefone ou cadastro já consta na base. Nenhum registro duplicado foi criado."); return; }
-    const now = new Date().toISOString().slice(0, 10);
-    setData((s) => [...s, { id: crypto.randomUUID(), nome: candidate.nome, telefone: candidate.telefone, email: String(f.get("email")) || undefined, municipio: String(f.get("municipio")), bairro: candidate.bairro, parentId: currentLeader.id, role: "participante", status: "cadastrado", registrationStatus: "pendente_revisao", linkStatus: "informado_lideranca", coordinator: currentLeader.coordinator, source: `Link de base — ${currentLeader.nome}`, contactAuthorized: Boolean(f.get("contactAuthorized")), notes: String(f.get("notes")), joinedAt: now, lastActivity: now, inviteCode: "", hasLogin: false }]);
-    setSaved((n) => n + 1); setMessage("Pessoa adicionada à base para revisão da coordenação."); form.reset();
+    if (!isSupabaseConfigured && duplicateCandidates(candidate, data).length) { setMessage("Este telefone ou cadastro já consta na base. Nenhum registro duplicado foi criado."); return; }
+    try {
+      if (isSupabaseConfigured && code) await submitCollection(code,{ nome:candidate.nome, telefone:candidate.telefone, email:String(f.get("email")), municipio:String(f.get("municipio")), bairro:candidate.bairro, notes:String(f.get("notes")), contactAuthorized:Boolean(f.get("contactAuthorized")) });
+      else {
+        const now = new Date().toISOString().slice(0, 10);
+        setData((s) => [...s, { id: crypto.randomUUID(), nome:candidate.nome, telefone:candidate.telefone, email:String(f.get("email"))||undefined, municipio:String(f.get("municipio")), bairro:candidate.bairro, parentId:activeContext.leaderId, role:"participante", status:"cadastrado", registrationStatus:"pendente_revisao", linkStatus:"informado_lideranca", source:`Link de base — ${activeContext.leaderName}`, contactAuthorized:Boolean(f.get("contactAuthorized")), notes:String(f.get("notes")), joinedAt:now, lastActivity:now, inviteCode:"", hasLogin:false }]);
+      }
+      setSaved((n)=>n+1); setMessage("Pessoa adicionada à base para revisão da coordenação."); form.reset();
+    } catch (reason) { const detail=reason instanceof Error?reason.message:"Não foi possível enviar."; setMessage(detail.includes("Cadastro ja existente")?"Este telefone já consta na base.":detail); }
   }
-  return <main className="public-form collection-public"><div className="brand"><span className="brand-mark">10</span><span><b>Rede 10</b><small>Cadastro de base</small></span></div><span className="eyebrow">Base de {leader.nome}</span><h1>Adicionar pessoa</h1><p>Use este formulário para informar pessoas da sua base. O registro não cria login, não representa voto e será revisado pela coordenação.</p><div className="collection-counter"><Users/><span><b>{saved}</b> adicionada(s) nesta sessão</span></div><form onSubmit={submit} className="stack"><Field label="Nome completo" name="nome" required/><Field label="Telefone ou WhatsApp" name="telefone" required/><Field label="E-mail (opcional)" name="email" type="email"/><div className="form-row"><Field label="Município" name="municipio" required/><Field label="Bairro ou comunidade" name="bairro" required/></div><label>Observação<textarea name="notes" rows={3}/></label><label className="check"><input type="checkbox" name="contactAuthorized"/><span>A pessoa autorizou contato pela equipe. Deixe desmarcado se não houver autorização.</span></label>{message&&<div className="form-message" role="status">{message}</div>}<button className="primary">Adicionar à base de {leader.nome.split(" ")[0]}</button></form></main>;
+  return <main className="public-form collection-public"><div className="brand"><span className="brand-mark">40180</span><span><b>TIME 40180</b><small>Cadastro de base</small></span></div><span className="eyebrow">Base de {activeContext.leaderName}</span><h1>Adicionar pessoa</h1><p>Use este formulário para informar pessoas da sua base. O registro não cria login, não representa voto e será revisado pela coordenação.</p><div className="collection-counter"><Users/><span><b>{saved}</b> adicionada(s) nesta sessão</span></div><form onSubmit={submit} className="stack"><Field label="Nome completo" name="nome" required/><Field label="Telefone ou WhatsApp" name="telefone" required/><Field label="E-mail (opcional)" name="email" type="email"/><div className="form-row"><Field label="Município" name="municipio" required/><Field label="Bairro ou comunidade" name="bairro" required/></div><label>Observação<textarea name="notes" rows={3}/></label><label className="check"><input type="checkbox" name="contactAuthorized"/><span>A pessoa autorizou contato pela equipe. Deixe desmarcado se não houver autorização.</span></label>{message&&<div className="form-message" role="status">{message}</div>}<button className="primary">Adicionar à base de {activeContext.leaderName.split(" ")[0]}</button></form></main>;
 }
 
-export function ModeSettings() {
-  const [mode, setMode] = useState<"mapeamento" | "mobilizacao">("mapeamento");
+export function ModeSettings({user}:{user:SessionUser}) {
+  const [mode, setMode] = useState<"mapeamento" | "mobilizacao">("mapeamento"), [message,setMessage]=useState("");
+  useEffect(()=>{ if(isSupabaseConfigured) loadOperatingMode().then(setMode).catch(()=>setMessage("Não foi possível carregar a configuração.")); },[]);
+  async function changeMode(next:'mapeamento'|'mobilizacao') { try { if(isSupabaseConfigured) await saveOperatingMode(next,user.profileId); setMode(next); setMessage("Configuração salva."); } catch(reason){setMessage(reason instanceof Error?reason.message:"Não foi possível salvar.");} }
   return (
     <>
       <Head
@@ -1156,13 +1176,14 @@ export function ModeSettings() {
           <input
             type="radio"
             checked={mode === "mapeamento"}
-            onChange={() => setMode("mapeamento")}
+            onChange={() => void changeMode("mapeamento")}
           />
           <span>
             <b>Mapeamento</b>
             <small>Ativo e recomendado nesta etapa</small>
           </span>
         </label>
+        {message&&<div className="form-message" role="status">{message}</div>}
         <label className="disabled">
           <input
             type="radio"

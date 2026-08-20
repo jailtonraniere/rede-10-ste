@@ -1,7 +1,7 @@
 import type { Member, SessionUser } from '../types'
 
-export const demoUser: SessionUser = { id: 'u1', nome: 'Marina Costa', email: 'lideranca@rede10.demo', role: 'lideranca', memberId: 'm1', territory: 'Zona Norte' }
-export const adminUser: SessionUser = { id: 'u0', nome: 'Renata Alves', email: 'admin@rede10.demo', role: 'administrador', memberId: 'm0', territory: 'Todos' }
+export const demoUser: SessionUser = { id: 'u1', profileId:'p1', nome: 'Marina Costa', email: 'lideranca@rede10.demo', role: 'lideranca', memberId: 'm1', territory: 'Zona Norte' }
+export const adminUser: SessionUser = { id: 'u0', profileId:'p0', nome: 'Renata Alves', email: 'admin@rede10.demo', role: 'administrador', memberId: 'm0', territory: 'Todos' }
 export const members: Member[] = [
   { id:'m1', nome:'Marina Costa', telefone:'(71) 99999-1001', email:'marina@exemplo.org', bairro:'Liberdade', municipio:'Salvador', status:'mobilizador_ativo', role:'lideranca', joinedAt:'2026-07-18', lastActivity:'2026-08-15', inviteCode:'MARINA10', collectionCode:'MAPMARINA', registrationStatus:'revisado', linkStatus:'confirmado_pessoa', coordinator:'Camila Rocha', source:'Base territorial 2026', contactAuthorized:true, notes:'Liderança comunitária fictícia.', estimatedCapacity:50, agreedGoal:20, goalDeadline:'2026-09-30', confidence:'medio', estimateMethod:'Entrevista com coordenação', lastReview:'2026-08-10', hasLogin:false },
   { id:'m2', nome:'Ana Souza', telefone:'(71) 99999-1002', bairro:'Liberdade', municipio:'Salvador', parentId:'m1', status:'cadastrado', role:'participante', joinedAt:'2026-08-12', lastActivity:'2026-08-14', inviteCode:'ANA10' },

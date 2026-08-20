@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Navigate,
   Route,
@@ -38,7 +38,8 @@ import {
   normalizePhone,
 } from "./lib/network";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
-import type { Member, Role, SessionUser } from "./types";
+import { loadMembers, loadSessionUser } from "./services/data";
+import type { Member, SessionUser } from "./types";
 import {
   Duplicates,
   ImportPage,
@@ -88,37 +89,11 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
       if (error) {
         setMessage("Login ou senha inválidos.");
       } else if (data.user) {
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("id,nome,email,role,territory_id")
-          .eq("auth_user_id", data.user.id)
-          .single();
-        if (profileError || !profile) {
+        try {
+          onLogin(await loadSessionUser(data.user));
+        } catch {
           await supabase.auth.signOut();
           setMessage("Seu acesso ainda não foi vinculado a um perfil. Procure a administração.");
-        } else {
-          const [{ data: member }, { data: territory }] = await Promise.all([
-            supabase
-              .from("network_members")
-              .select("id")
-              .eq("profile_id", profile.id)
-              .maybeSingle(),
-            profile.territory_id
-              ? supabase
-                  .from("territories")
-                  .select("nome")
-                  .eq("id", profile.territory_id)
-                  .maybeSingle()
-              : Promise.resolve({ data: null }),
-          ]);
-          onLogin({
-            id: data.user.id,
-            nome: profile.nome,
-            email: profile.email ?? data.user.email ?? loginEmail,
-            role: profile.role as Role,
-            memberId: member?.id ?? "",
-            territory: territory?.nome ?? "Todos",
-          });
         }
       }
     } else {
@@ -228,9 +203,26 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   );
 }
 
+function NewPassword() {
+  const [password, setPassword] = useState(""), [confirm, setConfirm] = useState(""), [message, setMessage] = useState(""), [done, setDone] = useState(false);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (password.length < 10) return setMessage("Use pelo menos 10 caracteres.");
+    if (password !== confirm) return setMessage("As senhas não coincidem.");
+    if (!supabase) return setMessage("Serviço indisponível.");
+    const { error } = await supabase.auth.updateUser({ password, data: { must_change_password: false } });
+    if (error) return setMessage(error.message);
+    setDone(true); setMessage("Senha atualizada com sucesso.");
+  }
+  return <main className="login-page"><section className="login-visual"><Logo/><div className="visual-copy"><span className="eyebrow">Segurança de acesso</span><h1>Crie uma nova senha.</h1><p>Use uma senha exclusiva para proteger os dados da sua rede.</p></div></section><section className="login-form"><div className="form-wrap"><h2>Nova senha</h2>{done?<><div className="form-message">{message}</div><a className="primary wide" href="/">Voltar ao login</a></>:<form onSubmit={submit}><label>Nova senha<input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} minLength={10} required autoComplete="new-password"/></label><label>Confirmar senha<input type="password" value={confirm} onChange={(e)=>setConfirm(e.target.value)} minLength={10} required autoComplete="new-password"/></label>{message&&<div className="form-message" role="alert">{message}</div>}<button className="primary wide">Atualizar senha</button></form>}</div></section></main>;
+}
+
+function LoadingScreen() {
+  return <main className="public-form success"><Logo/><h1>Carregando acesso…</h1><p>Validando sua sessão e permissões.</p></main>;
+}
+
 const nav = [
   ["/inicio", "Início", Home],
-  ["/convidar", "Convidar", Link2],
   ["/rede", "Minha rede", Users],
   ["/arvore", "Visualizar rede", ListTree],
 ] as const;
@@ -342,21 +334,21 @@ function Shell({
   );
 }
 
-function Dashboard({ user }: { user: SessionUser }) {
-  const direct = directMembers(members, user.memberId),
+function Dashboard({ user, data }: { user: SessionUser; data: Member[] }) {
+  const direct = user.memberId ? directMembers(data, user.memberId) : data.filter((member) => !member.parentId),
     active = direct.filter(confirmed),
-    total = descendants(members, user.memberId);
+    total = user.memberId ? descendants(data, user.memberId) : data;
   return (
     <>
       <div className="page-title">
         <div>
-          <span className="eyebrow">Sexta-feira, 15 de agosto</span>
+          <span className="eyebrow">{new Intl.DateTimeFormat("pt-BR", { dateStyle: "full" }).format(new Date())}</span>
           <h1>Olá, {user.nome.split(" ")[0]}!</h1>
           <p>Acompanhe a sua mobilização e cuide dos próximos passos.</p>
         </div>
-        <a className="primary" href="/convidar">
-          <Plus />
-          Novo convite
+        <a className="primary" href="/rede">
+          <Users />
+          Ver minha rede
         </a>
       </div>
       <section className="hero-card">
@@ -386,21 +378,21 @@ function Dashboard({ user }: { user: SessionUser }) {
       <section className="metric-grid">
         <Metric
           icon={<Link2 />}
-          value="7"
-          label="Convites enviados"
-          hint="2 aguardando resposta"
+          value={String(direct.length)}
+          label="Pessoas diretas"
+          hint="na base autorizada"
         />
         <Metric
           icon={<Users />}
           value={String(active.length)}
           label="Cadastros confirmados"
-          hint="+2 nesta semana"
+          hint="na rede direta"
         />
         <Metric
           icon={<ShieldCheck />}
-          value="1"
-          label="Mobilizador ativo"
-          hint="na sua rede direta"
+          value={String(direct.filter((member) => member.role === "mobilizador" || member.role === "lideranca").length)}
+          label="Lideranças e mobilizadores"
+          hint="na rede visível"
         />
         <Metric
           icon={<ListTree />}
@@ -419,7 +411,7 @@ function Dashboard({ user }: { user: SessionUser }) {
             <a href="/rede">Ver toda a rede</a>
           </div>
           <div className="activity">
-            {direct.slice(0, 4).map((m, i) => (
+            {direct.slice(0, 4).map((m) => (
               <div key={m.id}>
                 <span className="avatar small">
                   {m.nome
@@ -430,28 +422,24 @@ function Dashboard({ user }: { user: SessionUser }) {
                 <p>
                   <b>{m.nome}</b>
                   <span>
-                    {i === 0
-                      ? "Concluiu o cadastro"
-                      : i === 1
-                        ? "Tornou-se mobilizador"
-                        : "Recebeu seu convite"}
+                    Situação: {statuses[m.status]}
                   </span>
                 </p>
-                <time>{i + 1}d</time>
+                <time>{new Date(m.lastActivity + "T12:00").toLocaleDateString("pt-BR")}</time>
               </div>
             ))}
           </div>
         </section>
         <section className="card next">
           <span className="eyebrow">Próximo passo</span>
-          <h2>Convide mais uma pessoa hoje</h2>
+          <h2>Acompanhe sua rede</h2>
           <p>
-            Compartilhe seu link. Cada pessoa decide voluntariamente se deseja
-            concluir o cadastro.
+            Confira os vínculos diretos e sinalize à coordenação quando algum
+            dado precisar de correção.
           </p>
-          <a className="secondary" href="/convidar">
-            <Link2 />
-            Abrir meu link
+          <a className="secondary" href="/rede">
+            <Users />
+            Abrir minha rede
           </a>
           <small>Cadastro na rede não representa comprovação de voto.</small>
         </section>
@@ -575,11 +563,11 @@ function Invite() {
   );
 }
 
-function Network() {
+function Network({ user, data }: { user: SessionUser; data: Member[] }) {
   const [q, setQ] = useState(""),
     [filter, setFilter] = useState("todos");
-  const list = members
-    .filter((m) => m.parentId === "m1")
+  const list = data
+    .filter((m) => user.memberId ? m.parentId === user.memberId : !m.parentId)
     .filter(
       (m) =>
         (filter === "todos" || m.status === filter) &&
@@ -661,10 +649,13 @@ function Network() {
   );
 }
 
-function Tree() {
-  const [expanded, setExpanded] = useState(new Set(["m1", "m3"]));
+function Tree({ user, data }: { user: SessionUser; data: Member[] }) {
+  const roots = user.memberId
+    ? data.filter((member) => member.id === user.memberId)
+    : data.filter((member) => !member.parentId);
+  const [expanded, setExpanded] = useState(() => new Set(roots.map((member) => member.id)));
   function Node({ m, level = 0 }: { m: Member; level?: number }) {
-    const kids = directMembers(members, m.id),
+    const kids = directMembers(data, m.id),
       open = expanded.has(m.id);
     return (
       <div
@@ -707,7 +698,7 @@ function Tree() {
         </div>
       </div>
       <section className="card tree">
-        <Node m={members[0]} />
+        {roots.length ? roots.map((member) => <Node key={member.id} m={member} />) : <div className="empty">Nenhum ramo disponível.</div>}
       </section>
     </>
   );
@@ -852,8 +843,7 @@ function Privacy() {
       </p>
       <h2>Contato</h2>
       <p>
-        Canal provisório: {appConfig.supportEmail}. Substitua pelo canal oficial
-        da campanha antes da publicação.
+        Canal para solicitações de acesso, correção, revogação ou exclusão: {appConfig.supportEmail}.
       </p>
     </main>
   );
@@ -956,19 +946,54 @@ function DisabledInvite() {
 
 export default function App() {
   const [user, setUser] = useState<SessionUser | null>(null),
-    [mappingData, setMappingData] = useState<Member[]>(members);
+    [mappingData, setMappingData] = useState<Member[]>(isSupabaseConfigured ? [] : members),
+    [authLoading, setAuthLoading] = useState(isSupabaseConfigured),
+    [dataLoading, setDataLoading] = useState(false),
+    [dataError, setDataError] = useState("");
+  async function refreshMembers() {
+    if (!isSupabaseConfigured) return;
+    setDataLoading(true); setDataError("");
+    try { setMappingData(await loadMembers()); }
+    catch (error) { setDataError(error instanceof Error ? error.message : "Não foi possível carregar a base."); }
+    finally { setDataLoading(false); }
+  }
+  useEffect(() => {
+    if (!supabase) return;
+    const client = supabase;
+    let active = true;
+    client.auth.getSession().then(async ({ data }) => {
+      if (!active) return;
+      if (data.session?.user) {
+        try { setUser(await loadSessionUser(data.session.user)); }
+        catch { await client.auth.signOut(); }
+      }
+      if (active) setAuthLoading(false);
+    });
+    const { data: listener } = client.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session) setUser(null);
+    });
+    return () => { active = false; listener.subscription.unsubscribe(); };
+  }, []);
+  useEffect(() => { if (user) void Promise.resolve().then(refreshMembers); }, [user]);
   async function logout() {
     await supabase?.auth.signOut();
     setUser(null);
   }
-  const mp = { data: mappingData, setData: setMappingData };
+  const mp = { data: mappingData, setData: setMappingData, user, refresh: refreshMembers };
+  if (authLoading) return <LoadingScreen />;
+  if (user && dataLoading) return <LoadingScreen />;
+  if (user && dataError) return <main className="public-form success"><h1>Não foi possível carregar a base</h1><p>{dataError}</p><button className="primary" onClick={refreshMembers}>Tentar novamente</button></main>;
+  const canManage = user?.role === "administrador" || user?.role === "coordenador";
   return (
     <Routes>
       <Route path="/privacidade" element={<Privacy />} />
       <Route path="/coleta/:code" element={<PublicCollection {...mp} />} />
       <Route path="/convite/:code" element={<DisabledInvite />} />
+      <Route path="/nova-senha" element={<NewPassword />} />
       {!user ? (
         <Route path="*" element={<Login onLogin={setUser} />} />
+      ) : user.mustChangePassword ? (
+        <Route path="*" element={<Navigate to="/nova-senha" replace />} />
       ) : (
         <Route
           path="*"
@@ -977,23 +1002,23 @@ export default function App() {
               <Routes>
                 <Route
                   path="/mapeamento"
-                  element={<MappingDashboard {...mp} />}
+                  element={canManage ? <MappingDashboard {...mp} /> : <Navigate to="/inicio" replace />}
                 />
-                <Route path="/liderancas" element={<PeopleList {...mp} />} />
+                <Route path="/liderancas" element={canManage ? <PeopleList {...mp} /> : <Navigate to="/inicio" replace />} />
                 <Route
                   path="/liderancas/:id"
-                  element={<LeaderDetail {...mp} />}
+                  element={canManage ? <LeaderDetail {...mp} /> : <Navigate to="/inicio" replace />}
                 />
                 <Route
                   path="/cadastro-rapido"
-                  element={<QuickCreate {...mp} />}
+                  element={canManage ? <QuickCreate {...mp} /> : <Navigate to="/inicio" replace />}
                 />
-                <Route path="/importar" element={<ImportPage {...mp} />} />
-                <Route path="/duplicidades" element={<Duplicates {...mp} />} />
-                <Route path="/configuracoes" element={<ModeSettings />} />
-                <Route path="/inicio" element={<Dashboard user={user} />} />
-                <Route path="/rede" element={<Network />} />
-                <Route path="/arvore" element={<Tree />} />
+                <Route path="/importar" element={canManage ? <ImportPage {...mp} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/duplicidades" element={canManage ? <Duplicates {...mp} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/configuracoes" element={canManage && user ? <ModeSettings user={user} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/inicio" element={<Dashboard user={user} data={mappingData} />} />
+                <Route path="/rede" element={<Network user={user} data={mappingData} />} />
+                <Route path="/arvore" element={<Tree user={user} data={mappingData} />} />
                 <Route
                   path="*"
                   element={
