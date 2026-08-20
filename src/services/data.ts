@@ -28,6 +28,7 @@ export function memberFromRow(row: MemberRow): Member {
     linkStatus: row.link_status as Member['linkStatus'],
     source: row.data_source ? String(row.data_source) : undefined,
     contactAuthorized: Boolean(row.contact_authorized),
+    needsCandidateMeeting: Boolean(row.needs_candidate_meeting),
     notes: row.internal_notes ? String(row.internal_notes) : undefined,
     estimatedCapacity: row.estimated_capacity == null ? undefined : Number(row.estimated_capacity),
     agreedGoal: row.agreed_goal == null ? undefined : Number(row.agreed_goal),
@@ -76,6 +77,7 @@ function memberPayload(input: NewMember) {
     status: input.status, participation_type: role === 'mobilizador' ? 'mobilizador' : 'participante', member_role: role,
     registration_status: input.registrationStatus ?? 'pendente_revisao', link_status: input.linkStatus ?? 'nao_informado',
     data_source: input.source || null, contact_authorized: input.contactAuthorized ?? false, internal_notes: input.notes || null,
+    needs_candidate_meeting: input.needsCandidateMeeting ?? false,
     estimated_capacity: input.estimatedCapacity || null, agreed_goal: input.agreedGoal || null, goal_deadline: input.goalDeadline || null,
     estimate_confidence: input.confidence || null, estimate_method: input.estimateMethod || null,
   }
