@@ -936,7 +936,8 @@ export default function App() {
     [mappingData, setMappingData] = useState<Member[]>([]),
     [authLoading, setAuthLoading] = useState(isSupabaseConfigured),
     [dataLoading, setDataLoading] = useState(false),
-    [dataError, setDataError] = useState("");
+    [dataError, setDataError] = useState(""),
+    [recoveryMode, setRecoveryMode] = useState(false);
   async function refreshMembers() {
     if (!isSupabaseConfigured) return;
     setDataLoading(true); setDataError("");
@@ -957,6 +958,10 @@ export default function App() {
       if (active) setAuthLoading(false);
     });
     const { data: listener } = client.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") {
+        window.history.replaceState({}, "", "/nova-senha");
+        setRecoveryMode(true);
+      }
       if (event === "SIGNED_OUT" || !session) setUser(null);
     });
     return () => { active = false; listener.subscription.unsubscribe(); };
@@ -968,6 +973,7 @@ export default function App() {
   }
   const mp = { data: mappingData, setData: setMappingData, user, refresh: refreshMembers };
   if (authLoading) return <LoadingScreen />;
+  if (recoveryMode) return <NewPassword />;
   if (user && dataLoading) return <LoadingScreen />;
   if (user && dataError) return <main className="public-form success"><h1>Não foi possível carregar a base</h1><p>{dataError}</p><button className="primary" onClick={refreshMembers}>Tentar novamente</button></main>;
   const isAdmin = user?.role === "administrador", canCreate = isAdmin || user?.role === "cadastrador";
