@@ -15,12 +15,14 @@ import {
   Power,
   Search,
   Settings2,
+  SlidersHorizontal,
   Trash2,
   Upload,
   UserCheck,
   Users,
+  X,
 } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { LinkStatus, Member, RegistrationStatus, Role, SessionUser } from "./types";
 import { brazilianPhonePattern, confirmed, directMembers, formatPhone, normalizePhone } from "./lib/network";
 import {
@@ -117,6 +119,8 @@ export function MappingDashboard({ data }: MappingProps) {
     confirmedCount = data.filter(confirmed).length,
     capacity = ls.reduce((a, m) => a + (m.estimatedCapacity ?? 0), 0),
     goal = ls.reduce((a, m) => a + (m.agreedGoal ?? 10), 0),
+    pending = data.filter((m) => !m.registrationStatus || m.registrationStatus === "pendente_revisao").length,
+    duplicateCount = data.filter((m) => m.registrationStatus === "duplicado").length,
     navigate = useNavigate();
   return (
     <>
@@ -126,28 +130,17 @@ export function MappingDashboard({ data }: MappingProps) {
         action={
           <button
             className="primary"
-            onClick={() => navigate("/cadastro-rapido")}
+            onClick={() => navigate("/cadastro-rapido?tipo=lideranca")}
           >
             <Plus />
-            Cadastro rápido
+            Cadastrar liderança
           </button>
         }
       />
       <section className="map-stats">
         <Stat
-          label="Lideranças"
-          value={ls.filter((m) => m.role === "lideranca").length}
-        />
-        <Stat
-          label="Mobilizadores"
-          value={ls.filter((m) => m.role === "mobilizador").length}
-        />
-        <Stat label="Apoiadores informados" value={supporters.length} />
-        <Stat
-          label="Pessoas únicas"
-          value={unique.length}
-          hint="sem dupla contagem"
-          tone="green"
+          label="Total de lideranças"
+          value={ls.length}
         />
         <Stat
           label="Capacidade estimada"
@@ -155,12 +148,15 @@ export function MappingDashboard({ data }: MappingProps) {
           hint="não é quantidade real"
         />
         <Stat label="Meta acordada" value={goal} />
+        <Stat label="Pessoas cadastradas" value={unique.length} hint={`${supporters.length} apoiadores`} tone="green" />
         <Stat label="Pessoas confirmadas" value={confirmedCount} />
         <Stat
           label="Realização da meta"
           value={`${realization(confirmedCount, goal)}%`}
           tone="lime"
         />
+        <Stat label="Pendências de revisão" value={pending} tone={pending ? "warning" : "green"} />
+        <Stat label="Possíveis duplicidades" value={duplicateCount} tone={duplicateCount ? "warning" : "green"} />
       </section>
       <div className="two-col mapping-cols">
         <section className="card">
@@ -258,10 +254,16 @@ function Attention({
 
 export function PeopleList({ data }: MappingProps) {
   const [q, setQ] = useState(""),
+    [roleFilter, setRoleFilter] = useState("todos"),
+    [statusFilter, setStatusFilter] = useState("todos"),
+    [filtersOpen, setFiltersOpen] = useState(false),
+    [page, setPage] = useState(1),
     navigate = useNavigate();
-  const list = leaders(data).filter((m) =>
-    m.nome.toLowerCase().includes(q.toLowerCase()),
-  );
+  const filtered = leaders(data).filter((m) =>
+    m.nome.toLowerCase().includes(q.toLowerCase())
+    && (roleFilter === "todos" || m.role === roleFilter)
+    && (statusFilter === "todos" || (m.registrationStatus ?? "pendente_revisao") === statusFilter),
+  ), pageSize = 25, pages = Math.max(1, Math.ceil(filtered.length / pageSize)), currentPage = Math.min(page, pages), list = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize), activeFilters = Number(roleFilter !== "todos") + Number(statusFilter !== "todos");
   return (
     <>
       <Head
@@ -270,36 +272,43 @@ export function PeopleList({ data }: MappingProps) {
         action={
           <button
             className="primary"
-            onClick={() => navigate("/cadastro-rapido")}
+            onClick={() => navigate("/cadastro-rapido?tipo=lideranca")}
           >
             <Plus />
-            Nova pessoa
+            Cadastrar liderança
           </button>
         }
       />
       <section className="card">
-        <div className="filters">
+        <div className="mobile-filter-toolbar">
+          <button className="secondary" onClick={() => setFiltersOpen(true)} aria-expanded={filtersOpen}><SlidersHorizontal/>Filtros{activeFilters ? ` (${activeFilters})` : ""}</button>
+          <span>{filtered.length} liderança(s)</span>
+        </div>
+        {filtersOpen && <button className="filter-backdrop" aria-label="Fechar filtros" onClick={() => setFiltersOpen(false)}/>}
+        <div className={`filters filter-drawer ${filtersOpen ? "open" : ""}`}>
+          <div className="filter-drawer-head"><div><b>Filtrar lideranças</b><small>Refine a lista exibida.</small></div><button className="icon" onClick={() => setFiltersOpen(false)} aria-label="Fechar filtros"><X/></button></div>
           <label className="search">
             <Search />
             <input
+              aria-label="Buscar liderança"
               value={q}
-              onChange={(e) => setQ(e.target.value)}
+              onChange={(e) => { setQ(e.target.value); setPage(1); }}
               placeholder="Buscar liderança"
             />
           </label>
-          <select>
-            <option>Todos os tipos</option>
-            <option>Liderança principal</option>
-            <option>Mobilizador</option>
-          </select>
-          <select>
-            <option>Todas as situações</option>
-            <option>Pendente de revisão</option>
-            <option>Pronto para ativação</option>
-          </select>
+          <label className="filter-field"><span>Tipo</span><select aria-label="Filtrar por tipo" value={roleFilter} onChange={(event) => { setRoleFilter(event.target.value); setPage(1); }}>
+            <option value="todos">Todos os tipos</option>
+            <option value="lideranca">Liderança principal</option>
+            <option value="mobilizador">Mobilizador</option>
+          </select></label>
+          <label className="filter-field"><span>Situação</span><select aria-label="Filtrar por situação" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
+            <option value="todos">Todas as situações</option>
+            {Object.entries(regLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}
+          </select></label>
+          <div className="filter-actions"><button className="secondary" onClick={() => { setQ(""); setRoleFilter("todos"); setStatusFilter("todos"); setPage(1); }}>Limpar filtros</button><button className="primary" onClick={() => setFiltersOpen(false)}>Ver resultados</button></div>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="responsive-table leadership-table">
             <thead>
               <tr>
                 <th>Liderança</th>
@@ -317,27 +326,30 @@ export function PeopleList({ data }: MappingProps) {
                 <tr
                   key={m.id}
                   onClick={() => navigate(`/liderancas/${m.id}`)}
+                  onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") navigate(`/liderancas/${m.id}`); }}
+                  tabIndex={0}
+                  aria-label={`Abrir ficha de ${m.nome}`}
                   className="click-row"
                 >
-                  <td>
+                  <td data-label="Liderança">
                     <b>{m.nome}</b>
                     <small>
                       {m.bairro} · {m.municipio}
                     </small>
                   </td>
-                  <td>
+                  <td data-label="Tipo">
                     {m.role === "lideranca" ? "Principal" : "Mobilizador"}
                   </td>
-                  <td>{m.estimatedCapacity ?? "—"}</td>
-                  <td>{m.agreedGoal ?? 10}</td>
-                  <td>{directMembers(data, m.id).length}</td>
-                  <td>
+                  <td data-label="Capacidade">{m.estimatedCapacity ?? "—"}</td>
+                  <td data-label="Meta">{m.agreedGoal ?? 10}</td>
+                  <td data-label="Vínculos">{directMembers(data, m.id).length}</td>
+                  <td data-label="Cadastro">
                     <Pill>
                       {regLabels[m.registrationStatus ?? "pendente_revisao"]}
                     </Pill>
                   </td>
-                  <td>{m.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td>
-                  <td>
+                  <td data-label="Reunião">{m.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td>
+                  <td data-label="Acesso">
                     {m.hasLogin ? (
                       <Pill tone="green">Ativado</Pill>
                     ) : (
@@ -349,6 +361,8 @@ export function PeopleList({ data }: MappingProps) {
             </tbody>
           </table>
         </div>
+        {!list.length && <div className="empty">Nenhuma liderança corresponde aos filtros.</div>}
+        <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
       </section>
     </>
   );
@@ -368,10 +382,11 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
     [municipio, setMunicipio] = useState("todos"),
     [bairro, setBairro] = useState("todos"),
     [leader, setLeader] = useState("todos"),
+    [filtersOpen, setFiltersOpen] = useState(false),
     [page, setPage] = useState(1),
     [deletingId, setDeletingId] = useState(""),
     [message, setMessage] = useState("");
-  const pageSize = 50,
+  const pageSize = 25,
     leaderOptions = leaders(data),
     municipalities = [...new Set(data.map((m) => m.municipio))].sort(),
     neighborhoods = [...new Set(data.filter((m) => municipio === "todos" || m.municipio === municipio).map((m) => m.bairro))].sort();
@@ -387,7 +402,8 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
   });
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize)),
     currentPage = Math.min(page, pages),
-    visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+    visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    activeFilters = [role,status,municipio,bairro,leader].filter((value) => value !== "todos").length;
   function change(setter: (value: string) => void, value: string) {
     setter(value); setPage(1);
   }
@@ -429,33 +445,55 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
     }
   }
   return <>
-    <Head title="Base de cadastros" description="Relação consolidada de pessoas visíveis no seu escopo de acesso." action={user?.role === "administrador" ? <button className="secondary" onClick={exportCsv}><Download/>Exportar filtrados</button> : undefined}/>
+    <Head title="Base de cadastros" description="Relação consolidada de pessoas visíveis no seu escopo de acesso." action={<div className="page-actions"><button className="primary" onClick={() => navigate("/cadastro-rapido?tipo=lideranca")}><Plus/>Cadastrar liderança</button>{user?.role === "administrador" && <button className="secondary" onClick={exportCsv}><Download/>Exportar filtrados</button>}</div>}/>
     <section className="card">
-      <div className="filters registrations-filters">
+      <div className="mobile-filter-toolbar"><button className="secondary" onClick={() => setFiltersOpen(true)} aria-expanded={filtersOpen}><SlidersHorizontal/>Filtros{activeFilters ? ` (${activeFilters})` : ""}</button><span>{filtered.length} resultado(s)</span></div>
+      {filtersOpen && <button className="filter-backdrop" aria-label="Fechar filtros" onClick={() => setFiltersOpen(false)}/>}
+      <div className={`filters registrations-filters filter-drawer ${filtersOpen ? "open" : ""}`}>
+        <div className="filter-drawer-head"><div><b>Filtrar cadastros</b><small>Escolha um ou mais critérios.</small></div><button className="icon" onClick={() => setFiltersOpen(false)} aria-label="Fechar filtros"><X/></button></div>
         <label className="search"><Search/><input aria-label="Buscar cadastros" value={q} onChange={(e)=>change(setQ,e.target.value)} placeholder="Nome, telefone, e-mail, local ou liderança"/></label>
-        <select aria-label="Filtrar por tipo" value={role} onChange={(e)=>change(setRole,e.target.value)}><option value="todos">Todos os tipos</option><option value="lideranca">Lideranças</option><option value="mobilizador">Mobilizadores</option><option value="participante">Apoiadores</option></select>
-        <select aria-label="Filtrar por cadastro" value={status} onChange={(e)=>change(setStatus,e.target.value)}><option value="todos">Todas as situações</option>{Object.entries(regLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>
-        <select aria-label="Filtrar por município" value={municipio} onChange={(e)=>{change(setMunicipio,e.target.value);setBairro("todos")}}><option value="todos">Todos os municípios</option>{municipalities.map((value)=><option key={value}>{value}</option>)}</select>
-        <select aria-label="Filtrar por bairro" value={bairro} onChange={(e)=>change(setBairro,e.target.value)}><option value="todos">Todos os bairros</option>{neighborhoods.map((value)=><option key={value}>{value}</option>)}</select>
-        <select aria-label="Filtrar por liderança" value={leader} onChange={(e)=>change(setLeader,e.target.value)}><option value="todos">Todas as lideranças</option>{leaderOptions.map((value)=><option key={value.id} value={value.id}>{value.nome}</option>)}</select>
+        <label className="filter-field"><span>Tipo</span><select aria-label="Filtrar por tipo" value={role} onChange={(e)=>change(setRole,e.target.value)}><option value="todos">Todos os tipos</option><option value="lideranca">Lideranças</option><option value="mobilizador">Mobilizadores</option><option value="participante">Apoiadores</option></select></label>
+        <label className="filter-field"><span>Situação</span><select aria-label="Filtrar por cadastro" value={status} onChange={(e)=>change(setStatus,e.target.value)}><option value="todos">Todas as situações</option>{Object.entries(regLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
+        <label className="filter-field"><span>Município</span><select aria-label="Filtrar por município" value={municipio} onChange={(e)=>{change(setMunicipio,e.target.value);setBairro("todos")}}><option value="todos">Todos os municípios</option>{municipalities.map((value)=><option key={value}>{value}</option>)}</select></label>
+        <label className="filter-field"><span>Bairro</span><select aria-label="Filtrar por bairro" value={bairro} onChange={(e)=>change(setBairro,e.target.value)}><option value="todos">Todos os bairros</option>{neighborhoods.map((value)=><option key={value}>{value}</option>)}</select></label>
+        <label className="filter-field"><span>Liderança</span><select aria-label="Filtrar por liderança" value={leader} onChange={(e)=>change(setLeader,e.target.value)}><option value="todos">Todas as lideranças</option>{leaderOptions.map((value)=><option key={value.id} value={value.id}>{value.nome}</option>)}</select></label>
+        <div className="filter-actions"><button className="secondary" onClick={() => {setQ("");setRole("todos");setStatus("todos");setMunicipio("todos");setBairro("todos");setLeader("todos");setPage(1);}}>Limpar filtros</button><button className="primary" onClick={() => setFiltersOpen(false)}>Ver resultados</button></div>
       </div>
       <div className="base-summary"><b>{filtered.length}</b> cadastro(s) encontrado(s) de {data.length} visíveis.</div>
       {message && <div className="form-message" role="status">{message}</div>}
-      <div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td>{member.role}</td><td>{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td>{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td>{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td>{member.bairro}<small>{member.municipio}</small></td><td>{member.source ?? "Não informada"}</td><td><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table className="responsive-table registrations-table"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td data-label="Pessoa"><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td data-label="Tipo">{member.role}</td><td data-label="Reunião">{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td data-label="Cadastro"><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td data-label="Vínculo">{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td data-label="Liderança">{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td data-label="Local">{member.bairro}<small>{member.municipio}</small></td><td data-label="Origem">{member.source ?? "Não informada"}</td><td data-label="Ações"><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>)}</tbody></table></div>
       {!visible.length && <div className="empty">Nenhum cadastro corresponde aos filtros.</div>}
       <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
     </section>
   </>;
 }
 
-export function QuickCreate({ data, setData }: MappingProps) {
+export function QuickCreate({ data, setData, user }: MappingProps) {
   const navigate = useNavigate(),
-    [type, setType] = useState<Role>("participante"),
+    isOwnNetworkUser = user?.role === "lideranca" || user?.role === "mobilizador",
+    ownParentId = user?.memberId ?? "",
+    [searchParams] = useSearchParams(),
+    draftKey = "rede10:cadastro-rapido",
+    [draft] = useState<Record<string,string>>(() => { try { return JSON.parse(sessionStorage.getItem(draftKey) ?? "{}"); } catch { return {}; } }),
+    requestedType = searchParams.get("tipo"),
+    initialType: Role = isOwnNetworkUser ? "participante" : requestedType === "lideranca" || requestedType === "mobilizador" || requestedType === "participante" ? requestedType : "participante",
+    [type, setType] = useState<Role>(isOwnNetworkUser ? "participante" : (draft.type as Role) || initialType),
     [error, setError] = useState("");
+  function remember(form: HTMLFormElement) {
+    const values = Object.fromEntries([...new FormData(form).entries()].map(([key,value]) => [key,String(value)]));
+    const meeting = form.elements.namedItem("needsCandidateMeeting") as HTMLInputElement | null;
+    if (meeting) values.needsCandidateMeeting = String(meeting.checked);
+    sessionStorage.setItem(draftKey, JSON.stringify(values));
+  }
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (isOwnNetworkUser && !ownParentId) {
+      setError("Seu acesso ainda não está vinculado à sua liderança. Solicite a correção à administração.");
+      return;
+    }
     const f = new FormData(e.currentTarget),
-      phone = String(f.get("telefone"));
+      phone = String(f.get("telefone")),
+      registrationType: Role = isOwnNetworkUser ? "participante" : type;
     const isDuplicate = Boolean(
       duplicateCandidates(
         {
@@ -479,16 +517,16 @@ export function QuickCreate({ data, setData }: MappingProps) {
       email: String(f.get("email")) || undefined,
       municipio: String(f.get("municipio")),
       bairro: String(f.get("bairro")),
-      role: type,
-      parentId: String(f.get("parentId")) || undefined,
-      source: "Cadastro administrativo",
+      role: registrationType,
+      parentId: isOwnNetworkUser ? ownParentId : String(f.get("parentId")) || undefined,
+      source: isOwnNetworkUser ? "Cadastro pela liderança" : "Cadastro administrativo",
       linkStatus: "nao_informado",
-      needsCandidateMeeting: type === "lideranca" && Boolean(f.get("needsCandidateMeeting")),
+      needsCandidateMeeting: registrationType === "lideranca" && Boolean(f.get("needsCandidateMeeting")),
       notes: String(f.get("notes")),
       estimatedCapacity:
-        type === "participante" ? undefined : Number(f.get("capacity")),
+        registrationType === "participante" ? undefined : Number(f.get("capacity")),
       agreedGoal:
-        type === "participante" ? undefined : Number(f.get("goal") || 10),
+        registrationType === "participante" ? undefined : Number(f.get("goal") || 10),
       registrationStatus: isDuplicate ? "duplicado" : "pendente_revisao",
       status: "cadastrado",
       joinedAt: new Date().toISOString().slice(0, 10),
@@ -499,7 +537,10 @@ export function QuickCreate({ data, setData }: MappingProps) {
     try {
       const saved = isSupabaseConfigured ? await createMember({ ...m, registrationStatus: isDuplicate ? "duplicado" : "pendente_revisao" }) : m;
       setData((s) => [...s, saved]);
-      if (!isDuplicate) navigate(type === "participante" ? "/mapeamento" : `/liderancas/${saved.id}`);
+      if (!isDuplicate) {
+        sessionStorage.removeItem(draftKey);
+        navigate(isOwnNetworkUser ? "/rede" : user?.role === "cadastrador" ? "/cadastros" : registrationType === "participante" ? "/mapeamento" : `/liderancas/${saved.id}`);
+      }
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Não foi possível salvar o cadastro.";
       setError(message.includes("network_members_active_phone") ? "Este telefone já consta na base." : message);
@@ -508,70 +549,31 @@ export function QuickCreate({ data, setData }: MappingProps) {
   return (
     <>
       <Head
-        title="Cadastro rápido"
-        description="Insira a pessoa agora; a conta de acesso poderá ser vinculada futuramente."
+        title={isOwnNetworkUser || type === "participante" ? "Cadastrar pessoa" : type === "lideranca" ? "Cadastrar liderança" : "Cadastrar mobilizador"}
+        description={isOwnNetworkUser ? "Adicione uma pessoa diretamente à sua rede. O rascunho fica salvo neste aparelho até a conclusão." : "Preencha os dados essenciais. O rascunho fica salvo neste aparelho até a conclusão."}
       />
       <section className="card form-card">
-        <form className="mapping-form" onSubmit={submit}>
-          <Field label="Nome completo" name="nome" required />
-          <PhoneField />
-          <Field label="E-mail (opcional)" name="email" type="email" autoComplete="email" />
-          <CityField />
-          <Field label="Bairro ou comunidade" name="bairro" required />
-          <label>
-            Tipo de pessoa
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value as Role)}
-              name="type"
-            >
-              <option value="participante">Apoiador</option>
-              <option value="lideranca">Liderança principal</option>
-              <option value="mobilizador">
-                Mobilizador / pequena liderança
-              </option>
-            </select>
-          </label>
-          <label>
-            Liderança de referência
-            <select name="parentId">
-              <option value="">Sem liderança</option>
-              {leaders(data).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.nome}
-                </option>
-              ))}
-            </select>
-          </label>
-          {type === "lideranca" && <label className="check span-2"><input type="checkbox" name="needsCandidateMeeting"/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
-          {type !== "participante" && (
-            <>
-              <Field
-                label="Capacidade estimada"
-                name="capacity"
-                type="number"
-                min="1"
-                required
-              />
-              <Field
-                label="Meta inicial acordada"
-                name="goal"
-                type="number"
-                min="1"
-                defaultValue="10"
-                required
-              />
-            </>
-          )}
-          <label className="span-2">
-            Observação
-            <textarea name="notes" rows={3} />
-          </label>
+        <form className="mapping-form sectioned-form" onSubmit={submit} onInput={(event) => remember(event.currentTarget)} onChange={(event) => remember(event.currentTarget)}>
+          <fieldset className="form-section span-2"><legend>Dados da pessoa</legend><p>Informações básicas para identificar o cadastro.</p><div className="form-section-grid">
+            <Field label="Nome completo" name="nome" defaultValue={draft.nome} required />
+            <PhoneField defaultValue={draft.telefone} />
+            <Field label="E-mail (opcional)" name="email" type="email" autoComplete="email" defaultValue={draft.email} />
+            <CityField defaultValue={draft.municipio || "Recife"} />
+            <Field label="Bairro ou comunidade" name="bairro" defaultValue={draft.bairro} required />
+            {isOwnNetworkUser ? <input type="hidden" name="type" value="participante"/> : <label>Tipo de pessoa<select value={type} onChange={(e) => setType(e.target.value as Role)} name="type"><option value="participante">Apoiador</option><option value="lideranca">Liderança principal</option><option value="mobilizador">Mobilizador / pequena liderança</option></select></label>}
+          </div></fieldset>
+          <fieldset className="form-section span-2"><legend>Vínculo na rede</legend><p>{isOwnNetworkUser ? "O cadastro será vinculado automaticamente à sua base." : "Defina a referência e, quando necessário, a meta inicial."}</p><div className="form-section-grid">
+            {isOwnNetworkUser ? <div className="network-owner-link"><UserCheck/><span><b>Cadastro na sua rede</b><small>A pessoa ficará diretamente vinculada a {user?.nome}.</small></span></div> : <label>Liderança de referência<select name="parentId" defaultValue={draft.parentId || ""}><option value="">Sem liderança</option>{leaders(data).map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}</select></label>}
+            {type === "lideranca" && <label className="check"><input type="checkbox" name="needsCandidateMeeting" defaultChecked={draft.needsCandidateMeeting === "true"}/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
+            {type !== "participante" && <><Field label="Capacidade estimada" name="capacity" type="number" min="1" defaultValue={draft.capacity} required/><Field label="Meta inicial acordada" name="goal" type="number" min="1" defaultValue={draft.goal || "10"} required/></>}
+          </div></fieldset>
+          <fieldset className="form-section span-2"><legend>Observações</legend><label>Informações adicionais<textarea name="notes" rows={3} defaultValue={draft.notes}/></label></fieldset>
           {error && (
             <div className="form-message span-2" role="alert">
               {error}
             </div>
           )}
+          {isOwnNetworkUser && !ownParentId && !error && <div className="form-message span-2" role="alert">Seu acesso ainda não está vinculado à sua liderança. Procure a administração antes de cadastrar.</div>}
           <div className="form-actions span-2">
             <button
               type="button"
@@ -580,7 +582,7 @@ export function QuickCreate({ data, setData }: MappingProps) {
             >
               Cancelar
             </button>
-            <button className="primary">Salvar</button>
+            <button className="primary register-primary" disabled={isOwnNetworkUser && !ownParentId}><UserCheck/>Salvar pessoa</button>
           </div>
         </form>
       </section>
@@ -603,9 +605,18 @@ export function EditRegistration({ data, setData }: MappingProps) {
   const { id } = useParams(),
     navigate = useNavigate(),
     member = data.find((item) => item.id === id),
-    [type, setType] = useState<Role>(member?.role ?? "participante"),
+    draftKey = `rede10:editar-cadastro:${id ?? "desconhecido"}`,
+    [draft] = useState<Record<string,string>>(() => { try { return JSON.parse(sessionStorage.getItem(draftKey) ?? "{}"); } catch { return {}; } }),
+    [type, setType] = useState<Role>((draft.type as Role) || member?.role || "participante"),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
+
+  function remember(form: HTMLFormElement) {
+    const values = Object.fromEntries([...new FormData(form).entries()].map(([key,value]) => [key,String(value)]));
+    const meeting = form.elements.namedItem("needsCandidateMeeting") as HTMLInputElement | null;
+    if (meeting) values.needsCandidateMeeting = String(meeting.checked);
+    sessionStorage.setItem(draftKey, JSON.stringify(values));
+  }
 
   if (!member) return <Head title="Cadastro não encontrado" description="O registro solicitado não está disponível no seu escopo de acesso."/>;
 
@@ -642,6 +653,7 @@ export function EditRegistration({ data, setData }: MappingProps) {
     try {
       const saved: Member = isSupabaseConfigured ? await updateMemberDetails(editableMember.id, input) : { ...editableMember, ...input, lastActivity:new Date().toISOString().slice(0,10) };
       setData((current) => current.map((item) => item.id === editableMember.id ? saved : item));
+      sessionStorage.removeItem(draftKey);
       navigate(-1);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Não foi possível atualizar o cadastro.";
@@ -656,17 +668,21 @@ export function EditRegistration({ data, setData }: MappingProps) {
   return <>
     <Head title={`Editar ${editableMember.nome}`} description="Atualize os dados do cadastro. Todas as alterações ficam registradas no histórico de auditoria."/>
     <section className="card form-card">
-      <form className="mapping-form" onSubmit={submit}>
-        <Field label="Nome completo" name="nome" defaultValue={editableMember.nome} required/>
-        <PhoneField defaultValue={formatPhone(editableMember.telefone)}/>
-        <Field label="E-mail (opcional)" name="email" type="email" autoComplete="email" defaultValue={editableMember.email ?? ""}/>
-        <CityField defaultValue={editableMember.municipio}/>
-        <Field label="Bairro ou comunidade" name="bairro" defaultValue={editableMember.bairro} required/>
-        <label>Tipo de pessoa<select value={type} onChange={(event)=>setType(event.target.value as Role)} name="type"><option value="participante">Apoiador</option><option value="lideranca">Liderança principal</option><option value="mobilizador">Mobilizador / pequena liderança</option></select></label>
-        <label>Liderança de referência<select name="parentId" defaultValue={editableMember.parentId ?? ""}><option value="">Sem liderança</option>{leaderOptions.map((leader)=><option value={leader.id} key={leader.id}>{leader.nome}</option>)}</select></label>
-        {type === "lideranca" && <label className="check span-2"><input type="checkbox" name="needsCandidateMeeting" defaultChecked={editableMember.needsCandidateMeeting}/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
-        {type !== "participante" && <><Field label="Capacidade estimada" name="capacity" type="number" min="1" defaultValue={editableMember.estimatedCapacity ?? 1} required/><Field label="Meta inicial acordada" name="goal" type="number" min="1" defaultValue={editableMember.agreedGoal ?? 10} required/></>}
-        <label className="span-2">Observação<textarea name="notes" rows={3} defaultValue={editableMember.notes ?? ""}/></label>
+      <form className="mapping-form sectioned-form" onSubmit={submit} onInput={(event) => remember(event.currentTarget)} onChange={(event) => remember(event.currentTarget)}>
+        <fieldset className="form-section span-2"><legend>Dados da pessoa</legend><p>Atualize as informações de identificação e contato.</p><div className="form-section-grid">
+          <Field label="Nome completo" name="nome" defaultValue={draft.nome ?? editableMember.nome} required/>
+          <PhoneField defaultValue={draft.telefone ?? formatPhone(editableMember.telefone)}/>
+          <Field label="E-mail (opcional)" name="email" type="email" autoComplete="email" defaultValue={draft.email ?? editableMember.email ?? ""}/>
+          <CityField defaultValue={draft.municipio ?? editableMember.municipio}/>
+          <Field label="Bairro ou comunidade" name="bairro" defaultValue={draft.bairro ?? editableMember.bairro} required/>
+          <label>Tipo de pessoa<select value={type} onChange={(event)=>setType(event.target.value as Role)} name="type"><option value="participante">Apoiador</option><option value="lideranca">Liderança principal</option><option value="mobilizador">Mobilizador / pequena liderança</option></select></label>
+        </div></fieldset>
+        <fieldset className="form-section span-2"><legend>Vínculo e meta</legend><p>Organize a posição deste cadastro na rede.</p><div className="form-section-grid">
+          <label>Liderança de referência<select name="parentId" defaultValue={draft.parentId ?? editableMember.parentId ?? ""}><option value="">Sem liderança</option>{leaderOptions.map((leader)=><option value={leader.id} key={leader.id}>{leader.nome}</option>)}</select></label>
+          {type === "lideranca" && <label className="check"><input type="checkbox" name="needsCandidateMeeting" defaultChecked={draft.needsCandidateMeeting !== undefined ? draft.needsCandidateMeeting === "true" : editableMember.needsCandidateMeeting}/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
+          {type !== "participante" && <><Field label="Capacidade estimada" name="capacity" type="number" min="1" defaultValue={draft.capacity ?? editableMember.estimatedCapacity ?? 1} required/><Field label="Meta inicial acordada" name="goal" type="number" min="1" defaultValue={draft.goal ?? editableMember.agreedGoal ?? 10} required/></>}
+        </div></fieldset>
+        <fieldset className="form-section span-2"><legend>Observações</legend><label>Informações adicionais<textarea name="notes" rows={3} defaultValue={draft.notes ?? editableMember.notes ?? ""}/></label></fieldset>
         {error && <div className="form-message span-2" role="alert">{error}</div>}
         <div className="form-actions span-2"><button type="button" className="secondary" onClick={()=>navigate(-1)} disabled={saving}>Cancelar</button><button className="primary" disabled={saving}>{saving ? "Salvando…" : "Salvar alterações"}</button></div>
       </form>
@@ -687,20 +703,33 @@ function Field(
 }
 
 function PhoneField({ defaultValue }: { defaultValue?: string } = {}) {
-  return <Field
-    label="Telefone ou WhatsApp"
-    name="telefone"
-    type="tel"
-    inputMode="numeric"
-    autoComplete="tel"
-    placeholder="(81) 99999-9999"
-    maxLength={15}
-    pattern={brazilianPhonePattern}
-    title="Informe o DDD e um telefone com 10 ou 11 números."
-    defaultValue={defaultValue}
-    onInput={(event) => { event.currentTarget.value = formatPhone(event.currentTarget.value); }}
-    required
-  />;
+  const [error, setError] = useState("");
+  function validate(input: HTMLInputElement, showError: boolean) {
+    const digits = normalizePhone(input.value), valid = digits.length === 10 || digits.length === 11;
+    input.setCustomValidity(valid ? "" : "Informe o DDD e um telefone com 10 ou 11 números.");
+    if (showError) setError(valid ? "" : "Informe o DDD e um telefone com 10 ou 11 números.");
+  }
+  return <label>
+    Telefone ou WhatsApp
+    <input
+      name="telefone"
+      type="tel"
+      inputMode="numeric"
+      autoComplete="tel"
+      placeholder="(81) 99999-9999"
+      maxLength={15}
+      pattern={brazilianPhonePattern}
+      title="Informe o DDD e um telefone com 10 ou 11 números."
+      defaultValue={defaultValue}
+      aria-describedby={error ? "telefone-error" : undefined}
+      aria-invalid={Boolean(error)}
+      onInput={(event) => { event.currentTarget.value = formatPhone(event.currentTarget.value); setError(""); validate(event.currentTarget, false); }}
+      onBlur={(event) => validate(event.currentTarget, Boolean(event.currentTarget.value))}
+      onInvalid={(event) => validate(event.currentTarget, true)}
+      required
+    />
+    {error && <small id="telefone-error" className="field-error" role="alert">{error}</small>}
+  </label>;
 }
 
 function CityField({ defaultValue = "Recife" }: { defaultValue?: string } = {}) {
@@ -811,8 +840,8 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
             .slice(0, 2)}
         </div>
         <div>
-          <Pill tone="warning">Sem conta de acesso</Pill>
-          <span>Organização e validação interna</span>
+          <Pill tone={member.hasLogin ? "green" : "warning"}>{member.hasLogin ? "Acesso ativo" : "Sem conta de acesso"}</Pill>
+          <span>{regLabels[member.registrationStatus ?? "pendente_revisao"]} · {member.bairro}</span>
         </div>
         <button className="secondary" onClick={() => act("ativar")}>
           <UserCheck />
@@ -836,7 +865,7 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
           <button className="secondary" onClick={() => { navigator.clipboard?.writeText(collectionUrl); setNotice("Link copiado."); }}><Copy/>Copiar link</button>
         </section>
       )}
-      <nav className="tabs">
+      <nav className="tabs" aria-label="Seções da liderança">
         {["resumo", "vinculos", "dados", "atividades", "historico"].map((t) => (
           <button
             className={tab === t ? "active" : ""}
@@ -856,22 +885,17 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
               hint="estimativa, não resultado"
             />
             <Stat label="Meta acordada" value={goal} />
-            <Stat label="Pessoas informadas" value={direct.length} />
             <Stat label="Pessoas cadastradas" value={direct.length} />
             <Stat label="Pessoas confirmadas" value={confirmedDirect} />
-            <Stat
-              label="Pequenas lideranças"
-              value={direct.filter((x) => x.role === "mobilizador").length}
-            />
-            <Stat
-              label="Ativadas com login"
-              value={direct.filter((x) => x.hasLogin).length}
-            />
             <Stat
               label="Realização da meta"
               value={`${realization(confirmedDirect, goal)}%`}
               tone="lime"
             />
+          </section>
+          <section className="leader-progress-card" aria-label={`Progresso da meta: ${confirmedDirect} de ${goal}`}>
+            <div><b>Progresso da meta</b><span>{confirmedDirect} de {goal} pessoas confirmadas</span></div><strong>{realization(confirmedDirect, goal)}%</strong>
+            <div className="progress"><i style={{width:`${Math.min(realization(confirmedDirect, goal),100)}%`}}/></div>
           </section>
           <div className="two-col">
             <section className="card">
@@ -913,34 +937,14 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
                 </button>
               </div>
             </section>
-            <section className="card">
-              <h2>Qualidade da estimativa</h2>
-              <dl className="detail-list">
-                <div>
-                  <dt>Confiança</dt>
-                  <dd>{m.confidence ?? "Não revisada"}</dd>
-                </div>
-                <div>
-                  <dt>Como foi obtida</dt>
-                  <dd>{m.estimateMethod ?? "Não informado"}</dd>
-                </div>
-                <div>
-                  <dt>Última revisão</dt>
-                  <dd>{m.lastReview ?? "Pendente"}</dd>
-                </div>
-                <div>
-                  <dt>Prazo da meta</dt>
-                  <dd>{m.goalDeadline ?? "A combinar"}</dd>
-                </div>
-              </dl>
-            </section>
+            <details className="card secondary-details"><summary>Informações complementares</summary><div className="secondary-metrics"><Stat label="Pequenas lideranças" value={direct.filter((x) => x.role === "mobilizador").length}/><Stat label="Ativadas com login" value={direct.filter((x) => x.hasLogin).length}/></div><h2>Qualidade da estimativa</h2><dl className="detail-list"><div><dt>Confiança</dt><dd>{m.confidence ?? "Não revisada"}</dd></div><div><dt>Como foi obtida</dt><dd>{m.estimateMethod ?? "Não informado"}</dd></div><div><dt>Última revisão</dt><dd>{m.lastReview ?? "Pendente"}</dd></div><div><dt>Prazo da meta</dt><dd>{m.goalDeadline ?? "A combinar"}</dd></div></dl></details>
           </div>
         </>
       )}
       {tab === "vinculos" && (
         <section className="card">
           <div className="table-wrap">
-            <table>
+            <table className="responsive-table">
               <thead>
                 <tr>
                   <th>Pessoa</th>
@@ -953,16 +957,16 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
               <tbody>
                 {direct.map((x) => (
                   <tr key={x.id}>
-                    <td>
+                    <td data-label="Pessoa">
                       <b>{x.nome}</b>
                       <small>{x.telefone}</small>
                     </td>
-                    <td>{x.role}</td>
-                    <td>
+                    <td data-label="Tipo">{x.role}</td>
+                    <td data-label="Cadastro">
                       {regLabels[x.registrationStatus ?? "pendente_revisao"]}
                     </td>
-                    <td>{linkLabels[x.linkStatus ?? "nao_informado"]}</td>
-                    <td>{x.hasLogin ? "Com login" : "Sem login"}</td>
+                    <td data-label="Vínculo">{linkLabels[x.linkStatus ?? "nao_informado"]}</td>
+                    <td data-label="Acesso">{x.hasLogin ? "Com login" : "Sem login"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1145,7 +1149,7 @@ export function ImportPage({ data, setData }: MappingProps) {
           </section>
           <section className="card">
             <div className="table-wrap">
-              <table>
+              <table className="responsive-table import-table">
                 <thead>
                   <tr>
                     <th>Linha</th>
@@ -1159,12 +1163,12 @@ export function ImportPage({ data, setData }: MappingProps) {
                 <tbody>
                   {analyzed.slice(0, 20).map((r, i) => (
                     <tr key={i}>
-                      <td>{i + 2}</td>
-                      <td>{r.row.nome || <em>ausente</em>}</td>
-                      <td>{r.row.telefone || <em>ausente</em>}</td>
-                      <td>{r.row.municipio || "—"}</td>
-                      <td>{r.row.bairro || "—"}</td>
-                      <td>
+                      <td data-label="Linha">{i + 2}</td>
+                      <td data-label="Nome">{r.row.nome || <em>ausente</em>}</td>
+                      <td data-label="Telefone">{r.row.telefone || <em>ausente</em>}</td>
+                      <td data-label="Município">{r.row.municipio || "—"}</td>
+                      <td data-label="Bairro">{r.row.bairro || "—"}</td>
+                      <td data-label="Validação">
                         {r.invalid ? (
                           <Pill tone="danger">Telefone inválido</Pill>
                         ) : r.duplicate ? (
@@ -1406,7 +1410,7 @@ export function TeamUsers({ user }: { user: SessionUser }) {
     {message&&<div className="form-message" role="status">{message}</div>}
     <div className="two-col team-users-layout">
       <section className="card"><h2>Criar usuário</h2><p>O usuário receberá uma senha temporária e deverá trocá-la no primeiro acesso.</p><form className="stack" onSubmit={submit}><Field label="Nome da pessoa" name="name" required/><Field label="Nome de usuário ou e-mail" name="login" required placeholder="Ex.: maria.silva ou maria@exemplo.com"/><label>Perfil<select name="role" defaultValue="cadastrador"><option value="cadastrador">Cadastrador — vê somente o que cadastrar</option><option value="administrador">Administrador — vê toda a base</option></select></label><button className="primary"><KeyRound/>Criar acesso</button></form>{credentials&&<div className="credentials-card"><label>Login<code>{credentials.username}</code></label><label>Senha temporária<code>{credentials.password}</code></label><button className="secondary" onClick={()=>navigator.clipboard?.writeText(`Login: ${credentials.username}\nSenha: ${credentials.password}`)}><Copy/>Copiar credenciais</button></div>}</section>
-      <section className="card team-list"><div className="section-head"><div><h2>Equipe com acesso</h2><p>{users.length} usuário(s) cadastrado(s).</p></div></div>{loading?<div className="empty">Carregando equipe…</div>:<div className="table-wrap"><table><thead><tr><th>Pessoa</th><th>Login</th><th>Perfil</th><th>Situação</th>{user.isSuperAdmin&&<th>Ações</th>}</tr></thead><tbody>{users.map((teamUser)=><tr key={teamUser.id}><td><b>{teamUser.name}{teamUser.isSuperAdmin&&<Pill tone="green">Geral</Pill>}</b><small>Desde {new Date(teamUser.createdAt).toLocaleDateString("pt-BR")}</small></td><td>{teamUser.username ?? teamUser.email ?? "—"}</td><td><select value={teamUser.role} disabled={teamUser.isSuperAdmin||busyAction===`role:${teamUser.id}`} onChange={(e)=>void changeRole(teamUser.id,e.target.value as 'administrador'|'cadastrador')}><option value="cadastrador">Cadastrador</option><option value="administrador">Administrador</option></select></td><td><Pill tone={teamUser.status==="bloqueado"?"warning":"green"}>{teamUser.status==="bloqueado"?"Inativo":"Ativo"}</Pill></td>{user.isSuperAdmin&&<td><div className="team-actions"><button className="team-action" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"reset")}><KeyRound/>Resetar senha</button>{!teamUser.isSuperAdmin&&<><button className="team-action" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"status")}><Power/>{teamUser.status==="bloqueado"?"Reativar":"Inativar"}</button><button className="team-action danger" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"delete")}><Trash2/>Excluir</button></>}</div></td>}</tr>)}</tbody></table></div>}</section>
+      <section className="card team-list"><div className="section-head"><div><h2>Equipe com acesso</h2><p>{users.length} usuário(s) cadastrado(s).</p></div></div>{loading?<div className="empty" aria-live="polite">Carregando equipe…</div>:<div className="table-wrap"><table className="responsive-table team-table"><thead><tr><th>Pessoa</th><th>Login</th><th>Perfil</th><th>Situação</th>{user.isSuperAdmin&&<th>Ações</th>}</tr></thead><tbody>{users.map((teamUser)=><tr key={teamUser.id}><td data-label="Pessoa"><b>{teamUser.name}{teamUser.isSuperAdmin&&<Pill tone="green">Geral</Pill>}</b><small>Desde {new Date(teamUser.createdAt).toLocaleDateString("pt-BR")}</small></td><td data-label="Login">{teamUser.username ?? teamUser.email ?? "—"}</td><td data-label="Perfil"><select aria-label={`Perfil de ${teamUser.name}`} value={teamUser.role} disabled={teamUser.isSuperAdmin||busyAction===`role:${teamUser.id}`} onChange={(e)=>void changeRole(teamUser.id,e.target.value as 'administrador'|'cadastrador')}><option value="cadastrador">Cadastrador</option><option value="administrador">Administrador</option></select></td><td data-label="Situação"><Pill tone={teamUser.status==="bloqueado"?"warning":"green"}>{teamUser.status==="bloqueado"?"Inativo":"Ativo"}</Pill></td>{user.isSuperAdmin&&<td data-label="Ações"><div className="team-actions"><button className="team-action" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"reset")}><KeyRound/>Resetar senha</button>{!teamUser.isSuperAdmin&&<><button className="team-action" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"status")}><Power/>{teamUser.status==="bloqueado"?"Reativar":"Inativar"}</button><button className="team-action danger" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"delete")}><Trash2/>Excluir</button></>}</div></td>}</tr>)}</tbody></table></div>}</section>
     </div>
   </>;
 }
