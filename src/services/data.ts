@@ -9,8 +9,11 @@ const requireClient = () => {
 }
 
 type MemberRow = Record<string, unknown>
+const memberSelect = '*,creator:profiles!network_members_created_by_profile_id_fkey(id,nome,role)'
 
 export function memberFromRow(row: MemberRow): Member {
+  const relatedCreator = Array.isArray(row.creator) ? row.creator[0] : row.creator
+  const creator = relatedCreator && typeof relatedCreator === 'object' ? relatedCreator as MemberRow : undefined
   return {
     id: String(row.id),
     nome: String(row.nome),
@@ -38,6 +41,9 @@ export function memberFromRow(row: MemberRow): Member {
     lastReview: row.last_reviewed_at ? String(row.last_reviewed_at).slice(0, 10) : undefined,
     hasLogin: Boolean(row.profile_id),
     accessUsername: row.access_username ? String(row.access_username) : undefined,
+    createdByProfileId: row.created_by_profile_id ? String(row.created_by_profile_id) : undefined,
+    createdByName: creator?.nome ? String(creator.nome) : undefined,
+    createdByRole: creator?.role as Role | undefined,
   }
 }
 
@@ -63,7 +69,10 @@ export async function loadSessionUser(user: User): Promise<SessionUser> {
 }
 
 export async function loadMembers(): Promise<Member[]> {
-  const { data, error } = await requireClient().from('network_members').select('*').order('created_at', { ascending: true })
+  const { data, error } = await requireClient()
+    .from('network_members')
+    .select(memberSelect)
+    .order('created_at', { ascending: true })
   if (error) throw error
   return (data ?? []).map((row) => memberFromRow(row as MemberRow))
 }
@@ -89,19 +98,19 @@ export function memberPayload(input: MemberInput) {
 
 export async function createMember(input: MemberInput): Promise<Member> {
   const payload = memberPayload(input)
-  const { data, error } = await requireClient().from('network_members').insert(payload).select('*').single()
+  const { data, error } = await requireClient().from('network_members').insert(payload).select(memberSelect).single()
   if (error) throw error
   return memberFromRow(data as MemberRow)
 }
 
 export async function updateMember(id: string, changes: Record<string, unknown>): Promise<Member> {
-  const { data, error } = await requireClient().from('network_members').update(changes).eq('id', id).select('*').single()
+  const { data, error } = await requireClient().from('network_members').update(changes).eq('id', id).select(memberSelect).single()
   if (error) throw error
   return memberFromRow(data as MemberRow)
 }
 
 export async function updateMemberDetails(id: string, input: MemberInput): Promise<Member> {
-  const { data, error } = await requireClient().from('network_members').update(memberPayload(input)).eq('id', id).select('*').single()
+  const { data, error } = await requireClient().from('network_members').update(memberPayload(input)).eq('id', id).select(memberSelect).single()
   if (error) throw error
   return memberFromRow(data as MemberRow)
 }
@@ -119,7 +128,7 @@ export async function deleteMember(id: string): Promise<void> {
 
 export async function bulkCreateMembers(items: MemberInput[]): Promise<Member[]> {
   if (!items.length) return []
-  const { data, error } = await requireClient().from('network_members').insert(items.map(memberPayload)).select('*')
+  const { data, error } = await requireClient().from('network_members').insert(items.map(memberPayload)).select(memberSelect)
   if (error) throw error
   return (data ?? []).map((row) => memberFromRow(row as MemberRow))
 }
