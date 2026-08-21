@@ -181,9 +181,12 @@ export function MappingDashboard({ data }: MappingProps) {
         }
       />
       <section className="map-stats">
+        <Stat label="Pessoas cadastradas" value={unique.length} hint={`${supporters.length} apoiadores`} tone="featured registrations" />
         <Stat
           label="Total de lideranças"
           value={ls.length}
+          hint="lideranças e mobilizadores"
+          tone="featured leaderships"
         />
         <Stat
           label="Capacidade estimada"
@@ -191,7 +194,6 @@ export function MappingDashboard({ data }: MappingProps) {
           hint="não é quantidade real"
         />
         <Stat label="Meta acordada" value={goal} />
-        <Stat label="Pessoas cadastradas" value={unique.length} hint={`${supporters.length} apoiadores`} tone="green" />
         <Stat label="Pessoas confirmadas" value={confirmedCount} />
         <Stat
           label="Realização da meta"
