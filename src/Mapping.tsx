@@ -130,10 +130,25 @@ function Stat({
   );
 }
 
+type RegistrationOrder = "mais" | "menos" | "nome";
+
+function sortRegistrationPerformance<T extends { name: string; total: number }>(
+  items: T[],
+  order: RegistrationOrder,
+) {
+  return [...items].sort((a, b) => {
+    if (order === "nome") return a.name.localeCompare(b.name, "pt-BR");
+    const quantityOrder = order === "menos" ? a.total - b.total : b.total - a.total;
+    return quantityOrder || a.name.localeCompare(b.name, "pt-BR");
+  });
+}
+
 export function MappingDashboard({ data }: MappingProps) {
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([]),
     [teamLoading, setTeamLoading] = useState(isSupabaseConfigured),
-    [teamError, setTeamError] = useState("");
+    [teamError, setTeamError] = useState(""),
+    [registrationOrder, setRegistrationOrder] = useState<RegistrationOrder>("mais"),
+    [minimumRegistrations, setMinimumRegistrations] = useState(0);
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     let active = true;
@@ -154,15 +169,28 @@ export function MappingDashboard({ data }: MappingProps) {
     teamPerformance = visibleTeam.map((teamMember) => ({
       ...teamMember,
       total:teamRegistrationCounts.get(teamMember.id) ?? 0,
-    })).sort((a,b) => b.total - a.total || a.name.localeCompare(b.name, "pt-BR")),
+    })),
     teamCreatedTotal = teamPerformance.reduce((total, member) => total + member.total, 0),
     unique = uniquePeople(data),
     ls = leaders(data),
+    directRegistrationCounts = data.reduce<Map<string, number>>((counts, member) => {
+      if (member.parentId) counts.set(member.parentId, (counts.get(member.parentId) ?? 0) + 1);
+      return counts;
+    }, new Map()),
+    leadershipPerformance = sortRegistrationPerformance(ls.map((member) => ({
+      member,
+      name:member.nome,
+      total:directRegistrationCounts.get(member.id) ?? 0,
+      capacity:member.estimatedCapacity ?? 10,
+    })).filter((member) => member.total >= minimumRegistrations), registrationOrder),
+    filteredTeamPerformance = sortRegistrationPerformance(
+      teamPerformance.filter((member) => member.total >= minimumRegistrations),
+      registrationOrder,
+    ),
     supporters = data.filter((m) => m.role === "participante"),
     confirmedCount = data.filter(confirmed).length,
     capacity = ls.reduce((a, m) => a + (m.estimatedCapacity ?? 0), 0),
     goal = ls.reduce((a, m) => a + (m.agreedGoal ?? 10), 0),
-    pending = data.filter((m) => !m.registrationStatus || m.registrationStatus === "pendente_revisao").length,
     duplicateCount = data.filter((m) => m.registrationStatus === "duplicado").length,
     navigate = useNavigate();
   return (
@@ -199,7 +227,6 @@ export function MappingDashboard({ data }: MappingProps) {
           value={`${realization(confirmedCount, goal)}%`}
           tone="lime"
         />
-        <Stat label="Pendências de revisão" value={pending} tone={pending ? "warning" : "green"} />
         <Stat label="Possíveis duplicidades" value={duplicateCount} tone={duplicateCount ? "warning" : "green"} />
       </section>
       <button className="duplicate-review-shortcut" onClick={() => navigate("/duplicidades")} aria-label={`Revisar ${duplicateCount} possível(is) duplicidade(s)`}>
@@ -207,62 +234,89 @@ export function MappingDashboard({ data }: MappingProps) {
         <span className="duplicate-review-copy"><b>{duplicateCount} possível(is) duplicidade(s)</b><small>Telefone já encontrado em outro registro</small></span>
         <span className="duplicate-review-action">Revisar <ChevronRight aria-hidden="true" /></span>
       </button>
-      <section className="card leadership-distribution-card">
+      <div className="performance-toolbar">
+        <div>
+          <span className="eyebrow">Comparar cadastros</span>
+          <h2>Distribuição dos cadastros</h2>
+          <p>Os filtros abaixo são aplicados aos dois quadros.</p>
+        </div>
+        <div className="performance-controls">
+          <label>
+            <span>Classificar</span>
+            <select value={registrationOrder} onChange={(event) => setRegistrationOrder(event.target.value as RegistrationOrder)}>
+              <option value="mais">Mais cadastros</option>
+              <option value="menos">Menos cadastros</option>
+              <option value="nome">Nome (A–Z)</option>
+            </select>
+          </label>
+          <label>
+            <span>Quantidade mínima</span>
+            <select value={minimumRegistrations} onChange={(event) => setMinimumRegistrations(Number(event.target.value))}>
+              <option value={0}>Todos</option>
+              <option value={1}>1 ou mais</option>
+              <option value={5}>5 ou mais</option>
+              <option value={10}>10 ou mais</option>
+              <option value={25}>25 ou mais</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div className="performance-grid">
+        <section className="card leadership-distribution-card">
           <div className="section-head">
             <div>
               <h2>Distribuição por liderança</h2>
-              <p>Vínculos diretos cadastrados.</p>
+              <p>{leadershipPerformance.length} liderança(s) no filtro.</p>
             </div>
           </div>
-          <div className="leader-bars">
-            {ls.slice(0, 5).map((m) => {
-              const total = directMembers(data, m.id).length,
-                cap = m.estimatedCapacity ?? 10;
-              return (
+          {leadershipPerformance.length ? (
+            <div className="leader-bars">
+              {leadershipPerformance.slice(0, 8).map(({ member, total, capacity: estimatedCapacity }) => (
                 <button
-                  key={m.id}
-                  onClick={() => navigate(`/liderancas/${m.id}`)}
+                  key={member.id}
+                  onClick={() => navigate(`/liderancas/${member.id}`)}
                 >
                   <span>
-                    <b>{m.nome}</b>
+                    <b>{member.nome}</b>
                     <small>
-                      {total} de {cap} estimados
+                      {total} de {estimatedCapacity} estimados
                     </small>
                   </span>
                   <i>
                     <em
                       style={{
-                        width: `${Math.min((total / cap) * 100, 100)}%`,
+                        width: `${Math.min((total / estimatedCapacity) * 100, 100)}%`,
                       }}
                     />
                   </i>
                   <ChevronRight />
                 </button>
-              );
-            })}
+              ))}
+            </div>
+          ) : <div className="empty compact">Nenhuma liderança atende à quantidade selecionada.</div>}
+        </section>
+        <section className="card team-registration-card">
+          <div className="section-head">
+            <div>
+              <h2>Cadastros realizados pela equipe</h2>
+              <p>{filteredTeamPerformance.length} membro(s) no filtro.</p>
+            </div>
+            <span className="team-registration-total"><b>{teamCreatedTotal}</b> no total</span>
           </div>
-      </section>
-      <section className="card team-registration-card">
-        <div className="section-head">
-          <div>
-            <h2>Cadastros realizados pela equipe</h2>
-            <p>Quantidade registrada por administradores e cadastradores.</p>
-          </div>
-          <span className="team-registration-total"><b>{teamCreatedTotal}</b> no total</span>
-        </div>
-        {teamLoading ? <div className="empty compact" aria-live="polite">Carregando desempenho da equipe…</div> : teamError ? <div className="form-message" role="status">{teamError}</div> : teamPerformance.length ? (
-          <div className="team-registration-grid">
-            {teamPerformance.map((teamMember) => (
-              <button key={teamMember.id} onClick={() => navigate(`/cadastros?cadastrador=${teamMember.id}`)} aria-label={`Ver ${teamMember.total} cadastros feitos por ${teamMember.name}`}>
-                <span className="team-registration-avatar" aria-hidden="true">{teamMember.name.split(" ").slice(0,2).map((part) => part[0]).join("")}</span>
-                <span><b>{teamMember.name}</b><small>{accountRoleLabel(teamMember.role)}{teamMember.status === "bloqueado" ? " · Inativo" : ""}</small></span>
-                <strong>{teamMember.total}<small>{teamMember.total === 1 ? "cadastro" : "cadastros"}</small></strong>
-                <ChevronRight aria-hidden="true"/>
-              </button>
-            ))}
-          </div>
-        ) : <div className="empty compact">Nenhum cadastro da equipe foi identificado até o momento.</div>}
-      </section>
+          {teamLoading ? <div className="empty compact" aria-live="polite">Carregando desempenho da equipe…</div> : teamError ? <div className="form-message" role="status">{teamError}</div> : filteredTeamPerformance.length ? (
+            <div className="team-registration-grid">
+              {filteredTeamPerformance.map((teamMember) => (
+                <button key={teamMember.id} onClick={() => navigate(`/cadastros?cadastrador=${teamMember.id}`)} aria-label={`Ver ${teamMember.total} cadastros feitos por ${teamMember.name}`}>
+                  <span className="team-registration-avatar" aria-hidden="true">{teamMember.name.split(" ").slice(0,2).map((part) => part[0]).join("")}</span>
+                  <span><b>{teamMember.name}</b><small>{accountRoleLabel(teamMember.role)}{teamMember.status === "bloqueado" ? " · Inativo" : ""}</small></span>
+                  <strong>{teamMember.total}<small>{teamMember.total === 1 ? "cadastro" : "cadastros"}</small></strong>
+                  <ChevronRight aria-hidden="true"/>
+                </button>
+              ))}
+            </div>
+          ) : <div className="empty compact">Nenhum membro da equipe atende à quantidade selecionada.</div>}
+        </section>
+      </div>
     </>
   );
 }
