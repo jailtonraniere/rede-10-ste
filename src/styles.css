@@ -107,5 +107,12 @@ input:focus,select:focus,.mapping-form textarea:focus,.collection-public textare
 .delete-registration{border:0;background:transparent;color:var(--danger);display:inline-flex;align-items:center;gap:6px;padding:8px;border-radius:8px;font-weight:750;cursor:pointer}.delete-registration:hover{background:color-mix(in srgb,var(--danger) 9%,var(--surface))}.delete-registration:disabled{opacity:.5;cursor:wait}.delete-registration svg{width:16px;height:16px}
 .registration-actions{display:flex;align-items:center;gap:4px;white-space:nowrap}.edit-registration{border:0;background:transparent;color:var(--campaign-blue);display:inline-flex;align-items:center;gap:6px;padding:8px;border-radius:8px;font-weight:750;cursor:pointer}.edit-registration:hover{background:color-mix(in srgb,var(--campaign-blue) 8%,var(--surface))}.edit-registration svg{width:16px;height:16px}
 .mode-banner.active{background:#e8f3e9;border-color:#b8d7bd;color:#28583a}.mode-banner.active>svg{color:#3f7650}
-.team-users-layout{grid-template-columns:minmax(320px,.8fr) minmax(520px,1.2fr)}.team-users-layout .credentials-card{margin-top:18px}.team-users-layout table select{min-width:140px}@media(max-width:1000px){.team-users-layout{grid-template-columns:1fr}}
+.team-users-layout{grid-template-columns:minmax(320px,.8fr) minmax(520px,1.2fr)}
+.team-users-layout .credentials-card{grid-template-columns:minmax(0,1fr) minmax(0,1fr);width:100%;min-width:0;margin-top:18px}
+.team-users-layout .credentials-card>label{min-width:0}
+.team-users-layout .credentials-card code{width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere}
+.team-users-layout .credentials-card>button{grid-column:1/-1;width:100%}
+.team-users-layout table select{min-width:140px}
+@media(max-width:1000px){.team-users-layout{grid-template-columns:1fr}}
+@media(max-width:760px){.team-users-layout .credentials-card{grid-template-columns:minmax(0,1fr)}.team-users-layout .credentials-card>button{grid-column:auto}}
 .team-list{min-width:0}.team-list td>b{display:flex;align-items:center;gap:7px}.team-actions{display:flex;flex-wrap:wrap;gap:5px;min-width:235px}.team-action{border:0;background:color-mix(in srgb,var(--campaign-blue) 7%,var(--surface));color:var(--campaign-blue);border-radius:8px;padding:7px 8px;display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:800;cursor:pointer}.team-action:hover{background:color-mix(in srgb,var(--campaign-blue) 13%,var(--surface))}.team-action.danger{color:var(--danger);background:color-mix(in srgb,var(--danger) 7%,var(--surface))}.team-action:disabled{opacity:.45;cursor:wait}.team-action svg{width:14px;height:14px}
