@@ -1,12 +1,33 @@
 import { createClient } from "npm:@supabase/supabase-js@2.112.3";
 
-const frontendUrl = Deno.env.get("FRONTEND_URL") ?? "https://rede-10-ste-vilela.vercel.app";
-const cors = { "Access-Control-Allow-Origin": frontendUrl, "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type", "Vary": "Origin" };
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" } });
+const configuredOrigins = (Deno.env.get("FRONTEND_URLS") ?? Deno.env.get("FRONTEND_URL") ?? "")
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+const allowedOrigins = new Set([
+  "https://rede10.org",
+  "https://www.rede10.org",
+  "https://rede-10-ste-vilela.vercel.app",
+  ...configuredOrigins,
+]);
+const corsHeaders = (req: Request) => {
+  const requestOrigin = req.headers.get("Origin")?.replace(/\/$/, "") ?? "";
+  const isLocalOrigin = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(requestOrigin);
+  const origin = allowedOrigins.has(requestOrigin) || isLocalOrigin ? requestOrigin : "https://rede10.org";
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Max-Age": "86400",
+    "Vary": "Origin",
+  };
+};
 const normalizeUsername = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/\s+/g, ".").replace(/[^a-z0-9._-]/g, "").replace(/^[._-]+|[._-]+$/g, "");
 const temporaryPassword = () => `R10!${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}aA`;
 
 Deno.serve(async (req) => {
+  const cors = corsHeaders(req);
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" } });
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Método não permitido" }, 405);
   const url = Deno.env.get("SUPABASE_URL"), serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"), authorization = req.headers.get("Authorization");
