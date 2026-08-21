@@ -63,6 +63,24 @@ const linkLabels: Record<LinkStatus, string> = {
 };
 const leaders = (all: Member[]) =>
   all.filter((m) => m.role === "lideranca" || m.role === "mobilizador");
+const accountRoleLabel = (role: Role) => ({
+  administrador:"Administrador",
+  cadastrador:"Cadastrador",
+  coordenador:"Coordenador",
+  lideranca:"Liderança",
+  mobilizador:"Mobilizador",
+  participante:"Participante",
+})[role];
+const registrationCreatorLabel = (member: Member, all: Member[]) => {
+  if (member.createdByName) return member.createdByName;
+  const source = member.source?.toLocaleLowerCase("pt-BR") ?? "";
+  if (source.includes("link")) {
+    const leaderName = all.find((item) => item.id === member.parentId)?.nome;
+    return leaderName ? `Link de ${leaderName}` : "Link da liderança";
+  }
+  if (source.includes("import")) return "Importação";
+  return "Não identificado";
+};
 function Pill({
   children,
   tone = "neutral",
@@ -113,7 +131,32 @@ function Stat({
 }
 
 export function MappingDashboard({ data }: MappingProps) {
-  const unique = uniquePeople(data),
+  const [teamUsers, setTeamUsers] = useState<TeamUser[]>([]),
+    [teamLoading, setTeamLoading] = useState(isSupabaseConfigured),
+    [teamError, setTeamError] = useState("");
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    let active = true;
+    loadTeamUsers()
+      .then((users) => { if (active) setTeamUsers(users); })
+      .catch(() => { if (active) setTeamError("Não foi possível carregar o resumo da equipe."); })
+      .finally(() => { if (active) setTeamLoading(false); });
+    return () => { active = false; };
+  }, []);
+  const contributors = [...new Map(data
+      .filter((member) => member.createdByProfileId && member.createdByName && (member.createdByRole === "administrador" || member.createdByRole === "cadastrador"))
+      .map((member) => [member.createdByProfileId as string, { id:member.createdByProfileId as string, name:member.createdByName as string, role:member.createdByRole as "administrador"|"cadastrador", status:"cadastrado", createdAt:"", isSuperAdmin:false } satisfies TeamUser])).values()],
+    visibleTeam = teamUsers.length ? teamUsers : contributors,
+    teamRegistrationCounts = data.reduce<Map<string,number>>((counts, member) => {
+      if (member.createdByProfileId) counts.set(member.createdByProfileId, (counts.get(member.createdByProfileId) ?? 0) + 1);
+      return counts;
+    }, new Map()),
+    teamPerformance = visibleTeam.map((teamMember) => ({
+      ...teamMember,
+      total:teamRegistrationCounts.get(teamMember.id) ?? 0,
+    })).sort((a,b) => b.total - a.total || a.name.localeCompare(b.name, "pt-BR")),
+    teamCreatedTotal = teamPerformance.reduce((total, member) => total + member.total, 0),
+    unique = uniquePeople(data),
     ls = leaders(data),
     supporters = data.filter((m) => m.role === "participante"),
     confirmedCount = data.filter(confirmed).length,
@@ -226,6 +269,27 @@ export function MappingDashboard({ data }: MappingProps) {
           </div>
         </section>
       </div>
+      <section className="card team-registration-card">
+        <div className="section-head">
+          <div>
+            <h2>Cadastros realizados pela equipe</h2>
+            <p>Quantidade registrada por administradores e cadastradores.</p>
+          </div>
+          <span className="team-registration-total"><b>{teamCreatedTotal}</b> no total</span>
+        </div>
+        {teamLoading ? <div className="empty compact" aria-live="polite">Carregando desempenho da equipe…</div> : teamError ? <div className="form-message" role="status">{teamError}</div> : teamPerformance.length ? (
+          <div className="team-registration-grid">
+            {teamPerformance.map((teamMember) => (
+              <button key={teamMember.id} onClick={() => navigate(`/cadastros?cadastrador=${teamMember.id}`)} aria-label={`Ver ${teamMember.total} cadastros feitos por ${teamMember.name}`}>
+                <span className="team-registration-avatar" aria-hidden="true">{teamMember.name.split(" ").slice(0,2).map((part) => part[0]).join("")}</span>
+                <span><b>{teamMember.name}</b><small>{accountRoleLabel(teamMember.role)}{teamMember.status === "bloqueado" ? " · Inativo" : ""}</small></span>
+                <strong>{teamMember.total}<small>{teamMember.total === 1 ? "cadastro" : "cadastros"}</small></strong>
+                <ChevronRight aria-hidden="true"/>
+              </button>
+            ))}
+          </div>
+        ) : <div className="empty compact">Nenhum cadastro da equipe foi identificado até o momento.</div>}
+      </section>
     </>
   );
 }
@@ -376,34 +440,40 @@ const exportCell = (value: unknown) => {
 
 export function RegistrationsPage({ data, setData, user }: MappingProps) {
   const navigate = useNavigate(),
+    [searchParams] = useSearchParams(),
     [q, setQ] = useState(""),
     [role, setRole] = useState("todos"),
     [status, setStatus] = useState("todos"),
     [municipio, setMunicipio] = useState("todos"),
     [bairro, setBairro] = useState("todos"),
     [leader, setLeader] = useState("todos"),
+    [creator, setCreator] = useState(searchParams.get("cadastrador") ?? "todos"),
     [filtersOpen, setFiltersOpen] = useState(false),
     [page, setPage] = useState(1),
     [deletingId, setDeletingId] = useState(""),
     [message, setMessage] = useState("");
   const pageSize = 25,
     leaderOptions = leaders(data),
+    creatorOptions = [...new Map(data.filter((member) => member.createdByProfileId && member.createdByName).map((member) => [member.createdByProfileId as string, { id:member.createdByProfileId as string, name:member.createdByName as string }])).values()].sort((a,b) => a.name.localeCompare(b.name, "pt-BR")),
+    hasUnattributed = data.some((member) => !member.createdByProfileId),
     municipalities = [...new Set(data.map((m) => m.municipio))].sort(),
     neighborhoods = [...new Set(data.filter((m) => municipio === "todos" || m.municipio === municipio).map((m) => m.bairro))].sort();
   const filtered = data.filter((member) => {
     const query = q.trim().toLocaleLowerCase("pt-BR"),
-      leaderName = data.find((item) => item.id === member.parentId)?.nome ?? "";
-    return (!query || [member.nome, member.telefone, member.email, member.municipio, member.bairro, leaderName].some((value) => value?.toLocaleLowerCase("pt-BR").includes(query)))
+      leaderName = data.find((item) => item.id === member.parentId)?.nome ?? "",
+      creatorName = registrationCreatorLabel(member, data);
+    return (!query || [member.nome, member.telefone, member.email, member.municipio, member.bairro, leaderName, creatorName].some((value) => value?.toLocaleLowerCase("pt-BR").includes(query)))
       && (role === "todos" || member.role === role)
       && (status === "todos" || member.registrationStatus === status)
       && (municipio === "todos" || member.municipio === municipio)
       && (bairro === "todos" || member.bairro === bairro)
-      && (leader === "todos" || member.parentId === leader);
+      && (leader === "todos" || member.parentId === leader)
+      && (creator === "todos" || (creator === "sem_usuario" ? !member.createdByProfileId : member.createdByProfileId === creator));
   });
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize)),
     currentPage = Math.min(page, pages),
     visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    activeFilters = [role,status,municipio,bairro,leader].filter((value) => value !== "todos").length;
+    activeFilters = [role,status,municipio,bairro,leader,creator].filter((value) => value !== "todos").length;
   function change(setter: (value: string) => void, value: string) {
     setter(value); setPage(1);
   }
@@ -411,9 +481,9 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
     if (user?.role !== "administrador") return;
     setMessage("");
     try {
-      if (isSupabaseConfigured) await recordExportAudit(filtered.length, { busca:q, tipo:role, cadastro:status, municipio, bairro, lideranca:leader });
-      const header = ["Nome","Telefone","E-mail","Tipo","Precisa reunião com a candidata","Situação do cadastro","Situação do vínculo","Liderança de referência","Município","Bairro","Origem","Criado em","Última atividade"],
-        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.needsCandidateMeeting ? "Sim" : "Não",member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome,member.municipio,member.bairro,member.source,member.joinedAt,member.lastActivity]),
+      if (isSupabaseConfigured) await recordExportAudit(filtered.length, { busca:q, tipo:role, cadastro:status, municipio, bairro, lideranca:leader, cadastrado_por:creator });
+      const header = ["Nome","Telefone","E-mail","Tipo","Precisa reunião com a candidata","Situação do cadastro","Situação do vínculo","Liderança de referência","Município","Bairro","Origem","Cadastrado por","Criado em","Última atividade"],
+        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.needsCandidateMeeting ? "Sim" : "Não",member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome,member.municipio,member.bairro,member.source,registrationCreatorLabel(member,data),member.joinedAt,member.lastActivity]),
         csv = `\uFEFF${[header,...rows].map((row) => row.map(exportCell).join(";")).join("\r\n")}`,
         url = URL.createObjectURL(new Blob([csv], { type:"text/csv;charset=utf-8" })),
         anchor = document.createElement("a");
@@ -451,17 +521,18 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
       {filtersOpen && <button className="filter-backdrop" aria-label="Fechar filtros" onClick={() => setFiltersOpen(false)}/>}
       <div className={`filters registrations-filters filter-drawer ${filtersOpen ? "open" : ""}`}>
         <div className="filter-drawer-head"><div><b>Filtrar cadastros</b><small>Escolha um ou mais critérios.</small></div><button className="icon" onClick={() => setFiltersOpen(false)} aria-label="Fechar filtros"><X/></button></div>
-        <label className="search"><Search/><input aria-label="Buscar cadastros" value={q} onChange={(e)=>change(setQ,e.target.value)} placeholder="Nome, telefone, e-mail, local ou liderança"/></label>
+        <label className="search"><Search/><input aria-label="Buscar cadastros" value={q} onChange={(e)=>change(setQ,e.target.value)} placeholder="Nome, telefone, local, liderança ou cadastrador"/></label>
         <label className="filter-field"><span>Tipo</span><select aria-label="Filtrar por tipo" value={role} onChange={(e)=>change(setRole,e.target.value)}><option value="todos">Todos os tipos</option><option value="lideranca">Lideranças</option><option value="mobilizador">Mobilizadores</option><option value="participante">Apoiadores</option></select></label>
         <label className="filter-field"><span>Situação</span><select aria-label="Filtrar por cadastro" value={status} onChange={(e)=>change(setStatus,e.target.value)}><option value="todos">Todas as situações</option>{Object.entries(regLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
         <label className="filter-field"><span>Município</span><select aria-label="Filtrar por município" value={municipio} onChange={(e)=>{change(setMunicipio,e.target.value);setBairro("todos")}}><option value="todos">Todos os municípios</option>{municipalities.map((value)=><option key={value}>{value}</option>)}</select></label>
         <label className="filter-field"><span>Bairro</span><select aria-label="Filtrar por bairro" value={bairro} onChange={(e)=>change(setBairro,e.target.value)}><option value="todos">Todos os bairros</option>{neighborhoods.map((value)=><option key={value}>{value}</option>)}</select></label>
         <label className="filter-field"><span>Liderança</span><select aria-label="Filtrar por liderança" value={leader} onChange={(e)=>change(setLeader,e.target.value)}><option value="todos">Todas as lideranças</option>{leaderOptions.map((value)=><option key={value.id} value={value.id}>{value.nome}</option>)}</select></label>
-        <div className="filter-actions"><button className="secondary" onClick={() => {setQ("");setRole("todos");setStatus("todos");setMunicipio("todos");setBairro("todos");setLeader("todos");setPage(1);}}>Limpar filtros</button><button className="primary" onClick={() => setFiltersOpen(false)}>Ver resultados</button></div>
+        <label className="filter-field"><span>Cadastrado por</span><select aria-label="Filtrar por responsável pelo cadastro" value={creator} onChange={(e)=>change(setCreator,e.target.value)}><option value="todos">Todos os responsáveis</option>{creatorOptions.map((value)=><option key={value.id} value={value.id}>{value.name}</option>)}{hasUnattributed&&<option value="sem_usuario">Sem usuário identificado</option>}</select></label>
+        <div className="filter-actions"><button className="secondary" onClick={() => {setQ("");setRole("todos");setStatus("todos");setMunicipio("todos");setBairro("todos");setLeader("todos");setCreator("todos");setPage(1);}}>Limpar filtros</button><button className="primary" onClick={() => setFiltersOpen(false)}>Ver resultados</button></div>
       </div>
       <div className="base-summary"><b>{filtered.length}</b> cadastro(s) encontrado(s) de {data.length} visíveis.</div>
       {message && <div className="form-message" role="status">{message}</div>}
-      <div className="table-wrap"><table className="responsive-table registrations-table"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td data-label="Pessoa"><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td data-label="Tipo">{member.role}</td><td data-label="Reunião">{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td data-label="Cadastro"><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td data-label="Vínculo">{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td data-label="Liderança">{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td data-label="Local">{member.bairro}<small>{member.municipio}</small></td><td data-label="Origem">{member.source ?? "Não informada"}</td><td data-label="Ações"><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table className="responsive-table registrations-table"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Cadastrado por</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td data-label="Pessoa"><b>{member.nome}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td data-label="Tipo">{member.role}</td><td data-label="Reunião">{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td data-label="Cadastro"><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td data-label="Vínculo">{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td data-label="Liderança">{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td data-label="Local">{member.bairro}<small>{member.municipio}</small></td><td data-label="Origem">{member.source ?? "Não informada"}</td><td data-label="Cadastrado por"><b>{registrationCreatorLabel(member,data)}</b>{member.createdByRole&&<small>{accountRoleLabel(member.createdByRole)}</small>}</td><td data-label="Ações"><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>)}</tbody></table></div>
       {!visible.length && <div className="empty">Nenhum cadastro corresponde aos filtros.</div>}
       <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
     </section>
