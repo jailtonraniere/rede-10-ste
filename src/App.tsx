@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Navigate,
   Route,
@@ -43,19 +43,17 @@ import {
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 import { loadMembers, loadSessionUser } from "./services/data";
 import type { Member, SessionUser } from "./types";
-import {
-  Duplicates,
-  EditRegistration,
-  ImportPage,
-  LeaderDetail,
-  MappingDashboard,
-  ModeSettings,
-  PeopleList,
-  RegistrationsPage,
-  PublicCollection,
-  QuickCreate,
-  TeamUsers,
-} from "./Mapping";
+const MappingDashboard = lazy(() => import("./Mapping").then((module) => ({ default: module.MappingDashboard })));
+const PeopleList = lazy(() => import("./Mapping").then((module) => ({ default: module.PeopleList })));
+const RegistrationsPage = lazy(() => import("./Mapping").then((module) => ({ default: module.RegistrationsPage })));
+const EditRegistration = lazy(() => import("./Mapping").then((module) => ({ default: module.EditRegistration })));
+const TeamUsers = lazy(() => import("./Mapping").then((module) => ({ default: module.TeamUsers })));
+const LeaderDetail = lazy(() => import("./Mapping").then((module) => ({ default: module.LeaderDetail })));
+const QuickCreate = lazy(() => import("./Mapping").then((module) => ({ default: module.QuickCreate })));
+const ImportPage = lazy(() => import("./Mapping").then((module) => ({ default: module.ImportPage })));
+const Duplicates = lazy(() => import("./Mapping").then((module) => ({ default: module.Duplicates })));
+const ModeSettings = lazy(() => import("./Mapping").then((module) => ({ default: module.ModeSettings })));
+const PublicCollection = lazy(() => import("./Mapping").then((module) => ({ default: module.PublicCollection })));
 
 const Status = ({ value }: { value: string }) => (
   <span className={`status ${value}`}>{statuses[value] ?? value}</span>
@@ -80,6 +78,7 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
       "",
     ),
     [show, setShow] = useState(false),
+    [recovery, setRecovery] = useState(false),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
   async function submit(e: React.FormEvent) {
@@ -108,12 +107,15 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   async function reset() {
     if (!email) return setMessage("Informe seu e-mail primeiro.");
     if (!email.includes("@")) return setMessage("Para recuperar a senha, procure a coordenação ou informe um e-mail.");
-    if (supabase) {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${location.origin}/nova-senha`,
-      });
-      setMessage(error?.message ?? "Confira sua caixa de entrada.");
-    } else setMessage("Serviço de autenticação indisponível.");
+    setBusy(true);
+    try {
+      if (supabase) {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${location.origin}/nova-senha`,
+        });
+        setMessage(error?.message ?? "Confira sua caixa de entrada.");
+      } else setMessage("Serviço de autenticação indisponível.");
+    } finally { setBusy(false); }
   }
   return (
     <main className="login-page">
@@ -138,52 +140,68 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
           <div className="mobile-logo">
             <Logo />
           </div>
-          <span className="eyebrow">Bem-vinda de volta</span>
-          <h2>Acesse sua rede</h2>
-          <p>Entre com o login gerado pela administração ou com seu e-mail.</p>
-          <form onSubmit={submit}>
-            <label>
-              Login ou e-mail
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                type="text"
-                required
-                autoComplete="username"
-              />
-            </label>
-            <label>
-              Senha
-              <div className="password">
+          <span className="eyebrow">{recovery ? "Segurança de acesso" : "Bem-vinda de volta"}</span>
+          <h2>{recovery ? "Recuperar senha" : "Acesse sua rede"}</h2>
+          <p>{recovery ? "Informe o e-mail associado ao acesso. Enviaremos um link seguro para criar uma nova senha." : "Entre com o login gerado pela administração ou com seu e-mail."}</p>
+          {recovery ? (
+            <form onSubmit={(event) => { event.preventDefault(); void reset(); }}>
+              <label>
+                E-mail de acesso
                 <input
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  type={show ? "text" : "password"}
+                  value={email}
+                  onChange={(event) => { setEmail(event.target.value); setMessage(""); }}
+                  type="email"
                   required
-                  autoComplete="current-password"
+                  autoComplete="email"
+                  aria-describedby={message ? "recovery-message" : "recovery-help"}
                 />
-                <button
-                  type="button"
-                  aria-label={show ? "Ocultar senha" : "Mostrar senha"}
-                  onClick={() => setShow(!show)}
-                >
-                  {show ? <EyeOff /> : <Eye />}
-                </button>
-              </div>
-            </label>
-            {message && (
-              <div className="form-message" role="status">
-                {message}
-              </div>
-            )}
-            <button className="primary wide" disabled={busy}>
-              {busy ? "Entrando…" : "Entrar na Rede 10"}
-              <ChevronRight />
-            </button>
-            <button className="link-btn" type="button" onClick={reset}>
-              Esqueci minha senha
-            </button>
-          </form>
+                <small id="recovery-help" className="field-help">Para acessos criados apenas com nome de usuário, procure a coordenação.</small>
+              </label>
+              {message && <div id="recovery-message" className="form-message" role="status" aria-live="polite">{message}</div>}
+              <button className="primary wide" disabled={busy}>Enviar link de recuperação</button>
+              <button className="link-btn" type="button" onClick={() => { setRecovery(false); setMessage(""); }}>Voltar para entrar</button>
+            </form>
+          ) : (
+            <form onSubmit={submit}>
+              <label>
+                Login ou e-mail
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  type="text"
+                  required
+                  autoComplete="username"
+                />
+              </label>
+              <label>
+                Senha
+                <div className="password">
+                  <input
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    type={show ? "text" : "password"}
+                    required
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    aria-label={show ? "Ocultar senha" : "Mostrar senha"}
+                    onClick={() => setShow(!show)}
+                  >
+                    {show ? <EyeOff /> : <Eye />}
+                  </button>
+                </div>
+              </label>
+              {message && <div className="form-message" role="alert" aria-live="assertive">{message}</div>}
+              <button className="primary wide" disabled={busy}>
+                {busy ? "Entrando…" : "Entrar na Rede 10"}
+                <ChevronRight />
+              </button>
+              <button className="link-btn" type="button" onClick={() => { setRecovery(true); setMessage(""); }}>
+                Esqueci minha senha
+              </button>
+            </form>
+          )}
           <footer>
             Ao entrar, você concorda com os{" "}
             <a href="/privacidade">termos de uso e privacidade</a>.
@@ -205,15 +223,36 @@ function NewPassword() {
     if (error) return setMessage(error.message);
     setDone(true); setMessage("Senha atualizada com sucesso.");
   }
-  return <main className="login-page"><section className="login-visual"><Logo/><div className="visual-copy"><span className="eyebrow">Segurança de acesso</span><h1>Crie uma nova senha.</h1><p>Use uma senha exclusiva para proteger os dados da sua rede.</p></div></section><section className="login-form"><div className="form-wrap"><h2>Nova senha</h2>{done?<><div className="form-message">{message}</div><a className="primary wide" href="/">Voltar ao login</a></>:<form onSubmit={submit}><label>Nova senha<input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} minLength={10} required autoComplete="new-password"/></label><label>Confirmar senha<input type="password" value={confirm} onChange={(e)=>setConfirm(e.target.value)} minLength={10} required autoComplete="new-password"/></label>{message&&<div className="form-message" role="alert">{message}</div>}<button className="primary wide">Atualizar senha</button></form>}</div></section></main>;
+  return (
+    <main className="login-page">
+      <section className="login-visual"><Logo/><div className="visual-copy"><span className="eyebrow">Segurança de acesso</span><h1>Crie uma nova senha.</h1><p>Use uma senha exclusiva para proteger os dados da sua rede.</p></div></section>
+      <section className="login-form">
+        <div className="form-wrap">
+          <div className="mobile-logo"><Logo /></div>
+          <span className="eyebrow">Proteja seu acesso</span>
+          <h2>Nova senha</h2>
+          <p>Use pelo menos 10 caracteres e evite repetir senhas de outros serviços.</p>
+          {done ? <><div className="form-message" role="status">{message}</div><a className="primary wide" href="/">Voltar ao login</a></> : (
+            <form onSubmit={submit}>
+              <label>Nova senha<input type="password" value={password} onChange={(e)=>{setPassword(e.target.value);setMessage("");}} minLength={10} required autoComplete="new-password" aria-describedby="password-help"/><small id="password-help" className="field-help">Mínimo de 10 caracteres.</small></label>
+              <label>Confirmar senha<input type="password" value={confirm} onChange={(e)=>{setConfirm(e.target.value);setMessage("");}} minLength={10} required autoComplete="new-password"/></label>
+              {message&&<div className="form-message" role="alert">{message}</div>}
+              <button className="primary wide">Atualizar senha</button>
+            </form>
+          )}
+        </div>
+      </section>
+    </main>
+  );
 }
 
 function LoadingScreen() {
-  return <main className="public-form success"><Logo/><h1>Carregando acesso…</h1><p>Validando sua sessão e permissões.</p></main>;
+  return <main className="public-form success loading-state" aria-busy="true" aria-live="polite"><Logo/><span className="loading-spinner" aria-hidden="true"/><h1>Carregando acesso…</h1><p>Validando sua sessão e permissões.</p></main>;
 }
 
-const nav = [
+const networkNav = [
   ["/inicio", "Início", Home],
+  ["/cadastro-rapido", "Cadastrar Pessoas", UserPlus],
   ["/rede", "Minha rede", Users],
   ["/arvore", "Visualizar rede", ListTree],
 ] as const;
@@ -231,16 +270,28 @@ function Shell({
     [open, setOpen] = useState(false);
   const mappingItems = [
     ["/mapeamento", "Visão geral", BarChart3],
+    ["/cadastro-rapido", "Cadastrar Pessoas", UserPlus],
     ["/cadastros", "Base de cadastros", FileSpreadsheet],
     ["/liderancas", "Lideranças", Users],
-    ["/cadastro-rapido", "Cadastro rápido", UserPlus],
+    ["/arvore", "Visualizar rede", ListTree],
     ["/usuarios", "Usuários da equipe", KeyRound],
     ["/importar", "Importar base", FileSpreadsheet],
     ["/duplicidades", "Duplicidades", ShieldCheck],
     ["/configuracoes", "Configuração", Settings],
   ] as const;
-  const registrarItems = [["/cadastro-rapido", "Novo cadastro", UserPlus], ["/cadastros", "Meus cadastros", FileSpreadsheet]] as const;
-  const items = user.role === "administrador" ? mappingItems : user.role === "cadastrador" ? registrarItems : nav;
+  const registrarItems = [["/cadastro-rapido", "Cadastrar Pessoas", UserPlus], ["/cadastros", "Meus cadastros", FileSpreadsheet]] as const;
+  const items = user.role === "administrador" ? mappingItems : user.role === "cadastrador" ? registrarItems : networkNav;
+  const mobileItems = user.role === "administrador"
+    ? [["/mapeamento", "Painel", BarChart3], ["/cadastros", "Base", FileSpreadsheet], ["/cadastro-rapido", "Cadastrar", UserPlus], ["/liderancas", "Lideranças", Users]] as const
+    : user.role === "cadastrador"
+      ? [["/cadastros", "Cadastros", FileSpreadsheet], ["/cadastro-rapido", "Cadastrar", UserPlus]] as const
+      : [["/inicio", "Início", Home], ["/cadastro-rapido", "Cadastrar", UserPlus], ["/rede", "Minha rede", Users]] as const;
+  useEffect(() => {
+    if (!open) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [open]);
   return (
     <div className="app-shell">
       <aside className={open ? "open" : ""}>
@@ -263,12 +314,9 @@ function Shell({
         <nav aria-label="Principal">
           {items.map(([to, label, Icon]) => (
             <button
-              className={
-                loc.pathname === to || loc.pathname.startsWith(to + "/")
-                  ? "active"
-                  : ""
-              }
+              className={`${loc.pathname === to || loc.pathname.startsWith(to + "/") ? "active" : ""} ${to === "/cadastro-rapido" ? "nav-register-action" : ""}`}
               key={to}
+              aria-current={loc.pathname === to || loc.pathname.startsWith(to + "/") ? "page" : undefined}
               onClick={() => {
                 navTo(to);
                 setOpen(false);
@@ -289,6 +337,7 @@ function Shell({
           Sair
         </button>
       </aside>
+      {open && <button className="menu-backdrop mobile-only" aria-label="Fechar menu" onClick={() => setOpen(false)} />}
       <section className="content">
         <header>
           <button
@@ -321,6 +370,13 @@ function Shell({
         </header>
         <main className="page">{children}</main>
       </section>
+      <nav className="mobile-bottom-nav" aria-label="Atalhos principais">
+        {mobileItems.map(([to, label, Icon]) => {
+          const path = to.split("?")[0], active = loc.pathname === path || (path !== "/cadastro-rapido" && loc.pathname.startsWith(path + "/"));
+          return <button key={to} className={`${active ? "active" : ""} ${path === "/cadastro-rapido" ? "create" : ""}`} aria-current={active ? "page" : undefined} onClick={() => navTo(to)}><Icon/><span>{label}</span></button>;
+        })}
+        <button onClick={() => setOpen(true)} aria-expanded={open}><Menu/><span>Menu</span></button>
+      </nav>
     </div>
   );
 }
@@ -337,10 +393,16 @@ function Dashboard({ user, data }: { user: SessionUser; data: Member[] }) {
           <h1>Olá, {user.nome.split(" ")[0]}!</h1>
           <p>Acompanhe a sua mobilização e cuide dos próximos passos.</p>
         </div>
-        <a className="primary" href="/rede">
-          <Users />
-          Ver minha rede
-        </a>
+        <div className="page-actions">
+          <a className="primary register-primary" href="/cadastro-rapido">
+            <UserPlus />
+            Cadastrar pessoa
+          </a>
+          <a className="secondary" href="/rede">
+            <Users />
+            Ver minha rede
+          </a>
+        </div>
       </div>
       <section className="hero-card">
         <div>
@@ -422,15 +484,15 @@ function Dashboard({ user, data }: { user: SessionUser; data: Member[] }) {
           </div>
         </section>
         <section className="card next">
-          <span className="eyebrow">Próximo passo</span>
-          <h2>Acompanhe sua rede</h2>
+          <span className="eyebrow">Ação principal</span>
+          <h2>Cadastre pessoas da sua rede</h2>
           <p>
-            Confira os vínculos diretos e sinalize à coordenação quando algum
-            dado precisar de correção.
+            Adicione cada pessoa diretamente à sua base. Você verá somente os
+            cadastros vinculados ao seu acesso.
           </p>
-          <a className="secondary" href="/rede">
-            <Users />
-            Abrir minha rede
+          <a className="primary register-primary" href="/cadastro-rapido">
+            <UserPlus />
+            Cadastrar pessoa agora
           </a>
           <small>Cadastro na rede não representa comprovação de voto.</small>
         </section>
@@ -580,7 +642,7 @@ function Network({ user, data }: { user: SessionUser; data: Member[] }) {
         </div>
       </div>
       <section className="card">
-        <div className="filters">
+        <div className="filters compact-filters">
           <label className="search">
             <Search />
             <input
@@ -604,7 +666,7 @@ function Network({ user, data }: { user: SessionUser; data: Member[] }) {
           </select>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="responsive-table">
             <thead>
               <tr>
                 <th>Pessoa</th>
@@ -617,20 +679,20 @@ function Network({ user, data }: { user: SessionUser; data: Member[] }) {
             <tbody>
               {list.map((m) => (
                 <tr key={m.id}>
-                  <td>
+                  <td data-label="Pessoa">
                     <b>{m.nome}</b>
                     <small>{m.role}</small>
                   </td>
-                  <td>
+                  <td data-label="Situação">
                     <Status value={m.status} />
                   </td>
-                  <td>{m.bairro}</td>
-                  <td>
+                  <td data-label="Bairro">{m.bairro}</td>
+                  <td data-label="Entrada">
                     {new Date(m.joinedAt + "T12:00").toLocaleDateString(
                       "pt-BR",
                     )}
                   </td>
-                  <td>
+                  <td data-label="Ação">
                     <button className="link-btn">Acompanhar</button>
                   </td>
                 </tr>
@@ -647,10 +709,12 @@ function Network({ user, data }: { user: SessionUser; data: Member[] }) {
 }
 
 function Tree({ user, data }: { user: SessionUser; data: Member[] }) {
-  const roots = user.memberId
+  const hasOwnRoot = Boolean(user.memberId && data.some((member) => member.id === user.memberId));
+  const roots = hasOwnRoot
     ? data.filter((member) => member.id === user.memberId)
     : data.filter((member) => !member.parentId);
-  const [expanded, setExpanded] = useState(() => new Set(roots.map((member) => member.id)));
+  const [expanded, setExpanded] = useState(() => new Set(roots.map((member) => member.id))),
+    [view, setView] = useState<"tree" | "list">("tree");
   function Node({ m, level = 0 }: { m: Member; level?: number }) {
     const kids = directMembers(data, m.id),
       open = expanded.has(m.id);
@@ -660,6 +724,8 @@ function Tree({ user, data }: { user: SessionUser; data: Member[] }) {
         style={{ "--level": level } as React.CSSProperties}
       >
         <button
+          type="button"
+          aria-expanded={kids.length ? open : undefined}
           onClick={() =>
             setExpanded((s) => {
               const n = new Set(s);
@@ -694,9 +760,23 @@ function Tree({ user, data }: { user: SessionUser; data: Member[] }) {
           <p>Expanda apenas o trecho que deseja consultar.</p>
         </div>
       </div>
-      <section className="card tree">
-        {roots.length ? roots.map((member) => <Node key={member.id} m={member} />) : <div className="empty">Nenhum ramo disponível.</div>}
+      <div className="network-view-toggle" role="group" aria-label="Formato de visualização">
+        <button className={view === "tree" ? "active" : ""} onClick={() => setView("tree")}><ListTree/>Por ramos</button>
+        <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}><Users/>Em lista</button>
+      </div>
+      <section className={`card tree ${view === "list" ? "list-view" : ""}`} aria-live="polite">
+        {!roots.length ? <div className="empty">Nenhum ramo disponível.</div> : view === "tree" ? roots.map((member) => <Node key={member.id} m={member} />) : (
+          <div className="network-list">
+            {roots.map((root) => <section key={root.id}>
+              <h2>{root.nome}</h2>
+              <p>{root.bairro} · {root.municipio}</p>
+              {directMembers(data, root.id).map((member) => <article key={member.id}><span className="avatar small">{member.nome.split(" ").map((part) => part[0]).slice(0,2)}</span><span><b>{member.nome}</b><small>{member.role} · {member.bairro}</small></span><Status value={member.status}/></article>)}
+              {!directMembers(data, root.id).length && <div className="empty compact">Nenhum vínculo direto.</div>}
+            </section>)}
+          </div>
+        )}
       </section>
+      <p className="progressive-note">Os próximos níveis só aparecem quando você expande um ramo.</p>
     </>
   );
 }
@@ -995,9 +1075,11 @@ export default function App() {
   if (recoveryMode) return <NewPassword />;
   if (user && dataLoading) return <LoadingScreen />;
   if (user && dataError) return <main className="public-form success"><h1>Não foi possível carregar a base</h1><p>{dataError}</p><button className="primary" onClick={refreshMembers}>Tentar novamente</button></main>;
-  const isAdmin = user?.role === "administrador", canCreate = isAdmin || user?.role === "cadastrador";
+  const isAdmin = user?.role === "administrador",
+    canManageRegistrations = isAdmin || user?.role === "cadastrador",
+    canRegisterPeople = canManageRegistrations || user?.role === "lideranca" || user?.role === "mobilizador";
   return (
-    <Routes>
+    <Suspense fallback={<LoadingScreen />}><Routes>
       <Route path="/privacidade" element={<Privacy />} />
       <Route path="/coleta/:code" element={<PublicCollection {...mp} />} />
       <Route path="/convite/:code" element={<DisabledInvite />} />
@@ -1017,8 +1099,8 @@ export default function App() {
                   element={isAdmin ? <MappingDashboard {...mp} /> : <Navigate to="/cadastros" replace />}
                 />
                 <Route path="/liderancas" element={isAdmin ? <PeopleList {...mp} /> : <Navigate to="/cadastros" replace />} />
-                <Route path="/cadastros" element={canCreate ? <RegistrationsPage {...mp} /> : <Navigate to="/inicio" replace />} />
-                <Route path="/cadastros/:id/editar" element={canCreate ? <EditRegistration {...mp} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/cadastros" element={canManageRegistrations ? <RegistrationsPage {...mp} /> : <Navigate to="/inicio" replace />} />
+                <Route path="/cadastros/:id/editar" element={canManageRegistrations ? <EditRegistration {...mp} /> : <Navigate to="/inicio" replace />} />
                 <Route path="/usuarios" element={isAdmin ? <TeamUsers user={user} /> : <Navigate to="/cadastros" replace />} />
                 <Route
                   path="/liderancas/:id"
@@ -1026,7 +1108,7 @@ export default function App() {
                 />
                 <Route
                   path="/cadastro-rapido"
-                  element={canCreate ? <QuickCreate {...mp} /> : <Navigate to="/inicio" replace />}
+                  element={canRegisterPeople ? <QuickCreate {...mp} /> : <Navigate to="/inicio" replace />}
                 />
                 <Route path="/importar" element={isAdmin ? <ImportPage {...mp} /> : <Navigate to="/cadastros" replace />} />
                 <Route path="/duplicidades" element={isAdmin ? <Duplicates {...mp} /> : <Navigate to="/cadastros" replace />} />
@@ -1052,6 +1134,6 @@ export default function App() {
           }
         />
       )}
-    </Routes>
+    </Routes></Suspense>
   );
 }
