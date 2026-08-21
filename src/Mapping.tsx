@@ -10,6 +10,7 @@ import {
   FileSpreadsheet,
   History,
   KeyRound,
+  MessageCircle,
   Pencil,
   Plus,
   Power,
@@ -25,6 +26,7 @@ import {
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import type { LinkStatus, Member, RegistrationStatus, Role, SessionUser } from "./types";
 import { brazilianPhonePattern, confirmed, directMembers, formatPhone, normalizePhone } from "./lib/network";
+import { officialAccessUrl, temporaryAccessMessage, temporaryAccessWhatsAppUrl, type AccessAudience, type TemporaryAccess } from "./lib/accessShare";
 import {
   duplicateCandidates,
   parseCsv,
@@ -127,6 +129,47 @@ function Stat({
       <b>{value}</b>
       {hint && <small>{hint}</small>}
     </article>
+  );
+}
+
+function AccessCredentialsCard({
+  credentials,
+  audience,
+  onCopied,
+}: {
+  credentials: TemporaryAccess;
+  audience: AccessAudience;
+  onCopied: () => void;
+}) {
+  const message = temporaryAccessMessage(credentials, audience);
+  return (
+    <section className="credentials-card access-share-card">
+      <div className="credential-intro">
+        <KeyRound />
+        <span>
+          <b>{audience === "lideranca" ? "Acesso da liderança" : "Acesso da equipe"}</b>
+          <small>Envie por um canal seguro. A senha é temporária.</small>
+        </span>
+      </div>
+      <label className="credential-url">Endereço<code>{officialAccessUrl}</code></label>
+      <label>Login<code>{credentials.username}</code></label>
+      <label>Senha temporária<code>{credentials.password}</code></label>
+      <div className="credential-actions">
+        <button type="button" className="secondary" onClick={() => { void navigator.clipboard?.writeText(message); onCopied(); }}>
+          <Copy />
+          Copiar acesso completo
+        </button>
+        <a
+          className="whatsapp credential-share-whatsapp"
+          href={temporaryAccessWhatsAppUrl(credentials, audience)}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <MessageCircle />
+          Compartilhar no WhatsApp
+        </a>
+      </div>
+    </section>
   );
 }
 
@@ -823,7 +866,7 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
     [tab, setTab] = useState("resumo"),
     [notice, setNotice] = useState(""),
     [activities, setActivities] = useState<ActivityItem[]>([]),
-    [credentials, setCredentials] = useState<{username:string;password:string}|null>(null),
+    [credentials, setCredentials] = useState<TemporaryAccess|null>(null),
     [busyAction, setBusyAction] = useState("");
   useEffect(() => {
     if (!isSupabaseConfigured || !id) return;
@@ -933,7 +976,7 @@ export function LeaderDetail({ data, setData, user }: MappingProps) {
           {notice}
         </div>
       )}
-      {credentials && <section className="credentials-card"><div><KeyRound/><span><b>Acesso da liderança</b><small>Copie e entregue por canal seguro.</small></span></div><label>Login<code>{credentials.username}</code></label><label>Senha temporária<code>{credentials.password}</code></label><button className="secondary" onClick={() => { navigator.clipboard?.writeText(`Login: ${credentials.username}\nSenha: ${credentials.password}`); setNotice("Credenciais copiadas."); }}><Copy/>Copiar credenciais</button></section>}
+      {credentials && <AccessCredentialsCard credentials={credentials} audience="lideranca" onCopied={() => setNotice("Endereço, login e senha temporária copiados.")} />}
       {collectionUrl && (
         <section className="collection-link-card">
           <div><b>Link para cadastro da base</b><span>A liderança pode adicionar apoiadores vinculados a ela, sem login.</span></div>
@@ -1422,7 +1465,7 @@ export function TeamUsers({ user }: { user: SessionUser }) {
     [loading, setLoading] = useState(true),
     [busyAction, setBusyAction] = useState(""),
     [message, setMessage] = useState(""),
-    [credentials, setCredentials] = useState<{username:string;password:string}|null>(null);
+    [credentials, setCredentials] = useState<TemporaryAccess|null>(null);
   async function refresh() {
     setLoading(true);
     try { setUsers(await loadTeamUsers()); }
@@ -1485,7 +1528,7 @@ export function TeamUsers({ user }: { user: SessionUser }) {
     <Head title="Usuários da equipe" description={user.isSuperAdmin ? "Você é o Administrador geral e pode gerenciar acessos e senhas da equipe." : "Crie acessos para cadastradores ou conceda visão administrativa completa."}/>
     {message&&<div className="form-message" role="status">{message}</div>}
     <div className="two-col team-users-layout">
-      <section className="card"><h2>Criar usuário</h2><p>O usuário receberá uma senha temporária e deverá trocá-la no primeiro acesso.</p><form className="stack" onSubmit={submit}><Field label="Nome da pessoa" name="name" required/><Field label="Nome de usuário ou e-mail" name="login" required placeholder="Ex.: maria.silva ou maria@exemplo.com"/><label>Perfil<select name="role" defaultValue="cadastrador"><option value="cadastrador">Cadastrador — vê somente o que cadastrar</option><option value="administrador">Administrador — vê toda a base</option></select></label><button className="primary"><KeyRound/>Criar acesso</button></form>{credentials&&<div className="credentials-card"><label>Login<code>{credentials.username}</code></label><label>Senha temporária<code>{credentials.password}</code></label><button className="secondary" onClick={()=>navigator.clipboard?.writeText(`Login: ${credentials.username}\nSenha: ${credentials.password}`)}><Copy/>Copiar credenciais</button></div>}</section>
+      <section className="card"><h2>Criar usuário</h2><p>O usuário receberá uma senha temporária e deverá trocá-la no primeiro acesso.</p><form className="stack" onSubmit={submit}><Field label="Nome da pessoa" name="name" required/><Field label="Nome de usuário ou e-mail" name="login" required placeholder="Ex.: maria.silva ou maria@exemplo.com"/><label>Perfil<select name="role" defaultValue="cadastrador"><option value="cadastrador">Cadastrador — vê somente o que cadastrar</option><option value="administrador">Administrador — vê toda a base</option></select></label><button className="primary"><KeyRound/>Criar acesso</button></form>{credentials&&<AccessCredentialsCard credentials={credentials} audience="equipe" onCopied={() => setMessage("Endereço, login e senha temporária copiados.")} />}</section>
       <section className="card team-list"><div className="section-head"><div><h2>Equipe com acesso</h2><p>{users.length} usuário(s) cadastrado(s).</p></div></div>{loading?<div className="empty" aria-live="polite">Carregando equipe…</div>:<div className="table-wrap"><table className="responsive-table team-table"><thead><tr><th>Pessoa</th><th>Login</th><th>Perfil</th><th>Situação</th>{user.isSuperAdmin&&<th>Ações</th>}</tr></thead><tbody>{users.map((teamUser)=><tr key={teamUser.id}><td data-label="Pessoa"><b>{teamUser.name}{teamUser.isSuperAdmin&&<Pill tone="green">Geral</Pill>}</b><small>Desde {new Date(teamUser.createdAt).toLocaleDateString("pt-BR")}</small></td><td data-label="Login">{teamUser.username ?? teamUser.email ?? "—"}</td><td data-label="Perfil"><select aria-label={`Perfil de ${teamUser.name}`} value={teamUser.role} disabled={teamUser.isSuperAdmin||busyAction===`role:${teamUser.id}`} onChange={(e)=>void changeRole(teamUser.id,e.target.value as 'administrador'|'cadastrador')}><option value="cadastrador">Cadastrador</option><option value="administrador">Administrador</option></select></td><td data-label="Situação"><Pill tone={teamUser.status==="bloqueado"?"warning":"green"}>{teamUser.status==="bloqueado"?"Inativo":"Ativo"}</Pill></td>{user.isSuperAdmin&&<td data-label="Ações"><div className="team-actions"><button className="team-action" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"reset")}><KeyRound/>Resetar senha</button>{!teamUser.isSuperAdmin&&<><button className="team-action" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"status")}><Power/>{teamUser.status==="bloqueado"?"Reativar":"Inativar"}</button><button className="team-action danger" disabled={Boolean(busyAction)} onClick={()=>void manage(teamUser,"delete")}><Trash2/>Excluir</button></>}</div></td>}</tr>)}</tbody></table></div>}</section>
     </div>
   </>;
