@@ -194,7 +194,6 @@ export function MappingDashboard({ data }: MappingProps) {
           hint="não é quantidade real"
         />
         <Stat label="Meta acordada" value={goal} />
-        <Stat label="Pessoas confirmadas" value={confirmedCount} />
         <Stat
           label="Realização da meta"
           value={`${realization(confirmedCount, goal)}%`}
@@ -203,39 +202,12 @@ export function MappingDashboard({ data }: MappingProps) {
         <Stat label="Pendências de revisão" value={pending} tone={pending ? "warning" : "green"} />
         <Stat label="Possíveis duplicidades" value={duplicateCount} tone={duplicateCount ? "warning" : "green"} />
       </section>
-      <div className="two-col mapping-cols">
-        <section className="card">
-          <div className="section-head">
-            <div>
-              <h2>Atenções da base</h2>
-              <p>Itens que precisam de tratamento pela equipe.</p>
-            </div>
-          </div>
-          <div className="attention">
-            <Attention
-              tone="red"
-              title={`${data.filter((m) => m.registrationStatus === "duplicado").length} possível(is) duplicidade(s)`}
-              text="Telefone já encontrado em outro registro"
-              onClick={() => navigate("/duplicidades")}
-            />
-            <Attention
-              tone="amber"
-              title={`${data.filter((m) => !m.registrationStatus || m.registrationStatus === "pendente_revisao").length} pendentes de revisão`}
-              text="Cadastros aguardando conferência"
-            />
-            <Attention
-              tone="blue"
-              title={`${data.filter((m) => m.registrationStatus === "pronto_ativacao").length} prontos para ativação`}
-              text="Sem envio de convite nesta etapa"
-            />
-            <Attention
-              tone="amber"
-              title={`${data.filter((m) => m.linkStatus === "em_validacao").length} vínculo(s) em validação`}
-              text="Aguardando confirmação da pessoa"
-            />
-          </div>
-        </section>
-        <section className="card">
+      <button className="duplicate-review-shortcut" onClick={() => navigate("/duplicidades")} aria-label={`Revisar ${duplicateCount} possível(is) duplicidade(s)`}>
+        <span className="duplicate-review-icon" aria-hidden="true"><AlertTriangle /></span>
+        <span className="duplicate-review-copy"><b>{duplicateCount} possível(is) duplicidade(s)</b><small>Telefone já encontrado em outro registro</small></span>
+        <span className="duplicate-review-action">Revisar <ChevronRight aria-hidden="true" /></span>
+      </button>
+      <section className="card leadership-distribution-card">
           <div className="section-head">
             <div>
               <h2>Distribuição por liderança</h2>
@@ -269,8 +241,7 @@ export function MappingDashboard({ data }: MappingProps) {
               );
             })}
           </div>
-        </section>
-      </div>
+      </section>
       <section className="card team-registration-card">
         <div className="section-head">
           <div>
@@ -293,28 +264,6 @@ export function MappingDashboard({ data }: MappingProps) {
         ) : <div className="empty compact">Nenhum cadastro da equipe foi identificado até o momento.</div>}
       </section>
     </>
-  );
-}
-function Attention({
-  tone,
-  title,
-  text,
-  onClick,
-}: {
-  tone: string;
-  title: string;
-  text: string;
-  onClick?: () => void;
-}) {
-  return (
-    <div>
-      <span className={`dot ${tone}`} />
-      <p>
-        <b>{title}</b>
-        <span>{text}</span>
-      </p>
-      <button onClick={onClick}>Revisar</button>
-    </div>
   );
 }
 
