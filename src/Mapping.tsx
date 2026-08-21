@@ -517,7 +517,7 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
     }
   }
   return <>
-    <Head title="Base de cadastros" description="Relação consolidada de pessoas visíveis no seu escopo de acesso." action={<div className="page-actions"><button className="primary" onClick={() => navigate("/cadastro-rapido?tipo=lideranca")}><Plus/>Cadastrar liderança</button>{user?.role === "administrador" && <button className="secondary" onClick={exportCsv}><Download/>Exportar filtrados</button>}</div>}/>
+    <Head title="Base de cadastros" description="Relação consolidada de pessoas visíveis no seu escopo de acesso." action={<div className="page-actions"><button className="primary" onClick={() => navigate("/cadastro-rapido")}><Plus/>Cadastrar Pessoa</button>{user?.role === "administrador" && <button className="secondary" onClick={exportCsv}><Download/>Exportar filtrados</button>}</div>}/>
     <section className="card">
       <div className="mobile-filter-toolbar"><button className="secondary" onClick={() => setFiltersOpen(true)} aria-expanded={filtersOpen}><SlidersHorizontal/>Filtros{activeFilters ? ` (${activeFilters})` : ""}</button><span>{filtered.length} resultado(s)</span></div>
       {filtersOpen && <button className="filter-backdrop" aria-label="Fechar filtros" onClick={() => setFiltersOpen(false)}/>}
