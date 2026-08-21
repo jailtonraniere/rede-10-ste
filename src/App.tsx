@@ -118,15 +118,17 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
     } finally { setBusy(false); }
   }
   return (
-    <main className="login-page">
-      <section className="login-visual">
+    <main className="login-page login-entry">
+      <div className="login-mobile-brand">
+        <Logo />
+      </div>
+      <section className="login-visual" aria-labelledby="login-campaign-message">
         <Logo />
         <div className="visual-copy">
           <span className="eyebrow">Ste Vilela · 40180</span>
-          <h1>Uma rede feita de pessoas, vínculos e confiança.</h1>
+          <h1 id="login-campaign-message">Uma rede feita de pessoas, vínculos e confiança.</h1>
           <p>
-            Acompanhe o crescimento da sua rede sem confundir participação com
-            intenção de voto.
+            Organize suas lideranças e acompanhe a força da nossa rede.
           </p>
         </div>
         <div className="rings">
@@ -135,14 +137,11 @@ function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
           <i />
         </div>
       </section>
-      <section className="login-form">
-        <div className="form-wrap">
-          <div className="mobile-logo">
-            <Logo />
-          </div>
+      <section className="login-form" aria-label="Acesso à Rede 10">
+        <div className="form-wrap login-card">
           <span className="eyebrow">{recovery ? "Segurança de acesso" : "Bem-vinda de volta"}</span>
           <h2>{recovery ? "Recuperar senha" : "Acesse sua rede"}</h2>
-          <p>{recovery ? "Informe o e-mail associado ao acesso. Enviaremos um link seguro para criar uma nova senha." : "Entre com o login gerado pela administração ou com seu e-mail."}</p>
+          <p>{recovery ? "Informe o e-mail associado ao acesso. Enviaremos um link seguro para criar uma nova senha." : "Entre para acompanhar e organizar sua rede de mobilização."}</p>
           {recovery ? (
             <form onSubmit={(event) => { event.preventDefault(); void reset(); }}>
               <label>
