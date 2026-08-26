@@ -9,21 +9,26 @@ const requireClient = () => {
 }
 
 type MemberRow = Record<string, unknown>
-const memberSelect = '*,creator:profiles!network_members_created_by_profile_id_fkey(id,nome,role)'
+const memberSelect = '*,creator:profiles!network_members_created_by_profile_id_fkey(id,nome,role),access_profile:profiles!network_members_profile_id_fkey(id,nome,telefone,email,municipio,bairro,role,status,deleted_at,username)'
 
 export function memberFromRow(row: MemberRow): Member {
   const relatedCreator = Array.isArray(row.creator) ? row.creator[0] : row.creator
   const creator = relatedCreator && typeof relatedCreator === 'object' ? relatedCreator as MemberRow : undefined
+  const relatedAccessProfile = Array.isArray(row.access_profile) ? row.access_profile[0] : row.access_profile
+  const accessProfile = relatedAccessProfile && typeof relatedAccessProfile === 'object' ? relatedAccessProfile as MemberRow : undefined
+  const accessDeleted = Boolean(accessProfile?.deleted_at)
   return {
     id: String(row.id),
-    nome: String(row.nome),
-    telefone: String(row.telefone_normalizado),
-    email: row.email ? String(row.email) : undefined,
-    bairro: String(row.bairro),
-    municipio: String(row.municipio),
+    nome: String(row.nome ?? accessProfile?.nome ?? ''),
+    telefone: String(row.telefone_normalizado ?? accessProfile?.telefone ?? ''),
+    email: row.email ? String(row.email) : accessProfile?.email ? String(accessProfile.email) : undefined,
+    bairro: String(row.bairro ?? accessProfile?.bairro ?? ''),
+    municipio: String(row.municipio ?? accessProfile?.municipio ?? ''),
     parentId: row.parent_member_id ? String(row.parent_member_id) : undefined,
     status: row.status as Member['status'],
     role: (row.member_role ?? (row.participation_type === 'mobilizador' ? 'mobilizador' : 'participante')) as Role,
+    isTeamMember: Boolean(row.is_team_member),
+    recordOrigin: row.record_origin as Member['recordOrigin'],
     joinedAt: row.joined_at ? String(row.joined_at).slice(0, 10) : String(row.created_at).slice(0, 10),
     lastActivity: String(row.last_activity_at ?? row.updated_at ?? row.created_at).slice(0, 10),
     inviteCode: String(row.invite_code ?? ''),
@@ -39,8 +44,9 @@ export function memberFromRow(row: MemberRow): Member {
     confidence: row.estimate_confidence as Member['confidence'],
     estimateMethod: row.estimate_method ? String(row.estimate_method) : undefined,
     lastReview: row.last_reviewed_at ? String(row.last_reviewed_at).slice(0, 10) : undefined,
-    hasLogin: Boolean(row.profile_id),
-    accessUsername: row.access_username ? String(row.access_username) : undefined,
+    hasLogin: Boolean(row.profile_id) && !accessDeleted,
+    accessUsername: row.access_username ? String(row.access_username) : accessProfile?.username ? String(accessProfile.username) : undefined,
+    accessRole: accessProfile?.role as Role | undefined,
     createdByProfileId: row.created_by_profile_id ? String(row.created_by_profile_id) : undefined,
     createdByName: creator?.nome ? String(creator.nome) : undefined,
     createdByRole: creator?.role as Role | undefined,
@@ -81,18 +87,22 @@ export type MemberInput = Omit<Member, 'id'|'joinedAt'|'lastActivity'|'inviteCod
 
 export function memberPayload(input: MemberInput) {
   const role = input.role
+  const normalizedPhone = normalizePhone(input.telefone)
+  const source = input.source?.toLocaleLowerCase('pt-BR') ?? ''
+  const recordOrigin = input.recordOrigin ?? (source.includes('import') ? 'importacao' : source.includes('autocadastro') ? 'autocadastro' : 'base')
   return {
-    nome: input.nome.trim(), telefone_normalizado: normalizePhone(input.telefone), email: input.email || null,
+    nome: input.nome.trim(), telefone_normalizado: normalizedPhone || null, email: input.email || null,
     municipio: input.municipio.trim(), bairro: input.bairro.trim(), parent_member_id: input.parentId || null,
     status: input.status, participation_type: role === 'mobilizador' ? 'mobilizador' : 'participante', member_role: role,
+    is_team_member: input.isTeamMember ?? false, record_origin:recordOrigin,
     registration_status: input.registrationStatus ?? 'pendente_revisao', link_status: input.linkStatus ?? 'nao_informado',
     data_source: input.source || null, contact_authorized: input.contactAuthorized ?? false, internal_notes: input.notes || null,
     needs_candidate_meeting: role === 'lideranca' && (input.needsCandidateMeeting ?? false),
-    estimated_capacity: role === 'participante' ? null : input.estimatedCapacity || null,
-    agreed_goal: role === 'participante' ? null : input.agreedGoal || null,
-    goal_deadline: role === 'participante' ? null : input.goalDeadline || null,
-    estimate_confidence: role === 'participante' ? null : input.confidence || null,
-    estimate_method: role === 'participante' ? null : input.estimateMethod || null,
+    estimated_capacity: input.estimatedCapacity || null,
+    agreed_goal: input.agreedGoal || null,
+    goal_deadline: input.goalDeadline || null,
+    estimate_confidence: input.confidence || null,
+    estimate_method: input.estimateMethod || null,
   }
 }
 
@@ -171,22 +181,26 @@ export async function recordExportAudit(count: number, filters: Record<string, s
   if (error) throw error
 }
 
-export type TeamUser = { id:string; name:string; email?:string; username?:string; role:'administrador'|'cadastrador'; status:string; createdAt:string; isSuperAdmin:boolean }
+export type TeamUser = { id:string; memberId:string; name:string; email?:string; username?:string; role:Role; memberRole:Role; status:string; createdAt:string; isSuperAdmin:boolean; isTeamMember:boolean }
 
 export async function loadTeamUsers(): Promise<TeamUser[]> {
-  const { data, error } = await requireClient().from('profiles').select('id,nome,email,username,role,status,created_at,is_super_admin').in('role',['administrador','cadastrador']).is('deleted_at',null).order('created_at')
+  const { data, error } = await requireClient().from('network_members').select('id,nome,member_role,is_team_member,profile:profiles!network_members_profile_id_fkey(id,nome,email,username,role,status,created_at,is_super_admin,deleted_at)').not('profile_id','is',null).order('created_at')
   if (error) throw error
-  return (data ?? []).map((row) => ({ id:row.id, name:row.nome, email:row.email ?? undefined, username:row.username ?? undefined, role:row.role, status:row.status, createdAt:row.created_at, isSuperAdmin:row.is_super_admin === true }))
+  return (data ?? []).flatMap((row) => {
+    const related = Array.isArray(row.profile) ? row.profile[0] : row.profile
+    if (!related || related.deleted_at) return []
+    return [{ id:related.id, memberId:row.id, name:row.nome, email:related.email ?? undefined, username:related.username ?? undefined, role:related.role as Role, memberRole:row.member_role as Role, status:related.status, createdAt:related.created_at, isSuperAdmin:related.is_super_admin === true, isTeamMember:row.is_team_member === true }]
+  })
 }
 
-export async function createTeamUser(input: {name:string;login:string;role:'administrador'|'cadastrador'}) {
-  const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'create', ...input } })
+export async function createTeamMemberAccess(input: {memberId:string;login:string;role:Role}) {
+  const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'create-access', ...input } })
   if (error) throw error
   if (data?.error) throw new Error(data.error)
-  return data as {profileId:string;username:string;temporaryPassword:string;role:'administrador'|'cadastrador'}
+  return data as {profileId:string;username:string;temporaryPassword:string;role:Role}
 }
 
-export async function changeTeamUserRole(profileId:string, role:'administrador'|'cadastrador') {
+export async function changeTeamUserRole(profileId:string, role:Role) {
   const { data, error } = await requireClient().functions.invoke('manage-team-users', { body:{ action:'update-role', profileId, role } })
   if (error) throw error
   if (data?.error) throw new Error(data.error)
@@ -265,6 +279,7 @@ export async function submitCollection(token: string, values: Record<string, str
   const { data, error } = await requireClient().rpc('submit_collection_member', {
     p_token:token, p_nome:values.nome, p_telefone:values.telefone, p_email:values.email,
     p_municipio:values.municipio, p_bairro:values.bairro, p_observacao:values.notes,
+    p_treatment_authorized:Boolean(values.treatmentAuthorized),
     p_contact_authorized:Boolean(values.contactAuthorized),
   })
   if (error) throw error
