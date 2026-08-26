@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Member } from "../types";
 import {
-  buildLeadershipPerformance,
   buildResponsiblePerformance,
   filterResponsiblePerformance,
   type AccessUserSummary,
@@ -25,32 +24,6 @@ const member = (input: Partial<Member> & Pick<Member, "id" | "nome">): Member =>
 };
 
 describe("dashboardPerformance", () => {
-  it("separa pessoas vinculadas, estimativa, meta e progresso da liderança", () => {
-    const leader = member({
-      id: "leader",
-      nome: "Liderança",
-      role: "lideranca",
-      estimatedCapacity: 10,
-      agreedGoal: 5,
-    });
-    const data = [
-      leader,
-      ...Array.from({ length: 7 }, (_, index) => member({
-        id: `person-${index}`,
-        nome: `Pessoa ${index}`,
-        parentId: leader.id,
-      })),
-    ];
-
-    expect(buildLeadershipPerformance(data)[0]).toMatchObject({
-      total: 7,
-      estimatedCapacity: 10,
-      agreedGoal: 5,
-      target: 5,
-      progress: 140,
-    });
-  });
-
   it("mantém equipe sem acesso, autoria histórica e registros sem autoria separados", () => {
     const data = [
       member({ id: "team-1", nome: "Líder atual", role: "lideranca", isTeamMember: true }),

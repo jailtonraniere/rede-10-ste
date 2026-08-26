@@ -1,6 +1,5 @@
 import type { Member, Role } from "../types";
 
-export type LeadershipOrder = "mais" | "progresso" | "nome";
 export type ResponsibleOrder = "mais" | "menos" | "nome";
 export type ResponsibleScope = "todos" | "equipe" | "historicos" | "sem_acesso";
 export type AccessState = "ativo" | "inativo" | "sem_acesso" | "historico";
@@ -13,16 +12,6 @@ export type AccessUserSummary = {
   memberRole: Role;
   status: string;
   isTeamMember: boolean;
-};
-
-export type LeadershipPerformance = {
-  member: Member;
-  name: string;
-  total: number;
-  estimatedCapacity?: number;
-  agreedGoal?: number;
-  target: number;
-  progress: number;
 };
 
 export type ResponsiblePerformance = {
@@ -46,40 +35,6 @@ export type ResponsiblePerformanceResult = {
 
 const byName = (a: { name: string }, b: { name: string }) =>
   a.name.localeCompare(b.name, "pt-BR");
-
-export function buildLeadershipPerformance(
-  data: Member[],
-  order: LeadershipOrder = "mais",
-): LeadershipPerformance[] {
-  const directCounts = data.reduce<Map<string, number>>((counts, member) => {
-    if (member.parentId) counts.set(member.parentId, (counts.get(member.parentId) ?? 0) + 1);
-    return counts;
-  }, new Map());
-
-  return data
-    .filter((member) => member.role === "lideranca" || member.role === "mobilizador")
-    .map((member) => {
-      const total = directCounts.get(member.id) ?? 0;
-      const target = member.agreedGoal ?? member.estimatedCapacity ?? 0;
-      return {
-        member,
-        name: member.nome,
-        total,
-        estimatedCapacity: member.estimatedCapacity,
-        agreedGoal: member.agreedGoal,
-        target,
-        progress: target > 0 ? Math.round((total / target) * 100) : 0,
-      };
-    })
-    .sort((a, b) => {
-      if (order === "nome") return byName(a, b);
-      if (order === "progresso") {
-        const progressOrder = b.progress - a.progress;
-        return progressOrder || b.total - a.total || byName(a, b);
-      }
-      return b.total - a.total || byName(a, b);
-    });
-}
 
 export function buildResponsiblePerformance(
   data: Member[],
