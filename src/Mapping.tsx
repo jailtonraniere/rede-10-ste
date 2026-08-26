@@ -32,9 +32,16 @@ import {
   parseCsv,
   prepareActivation,
   realization,
-  uniquePeople,
   type CsvRow,
 } from "./lib/mapping";
+import {
+  buildLeadershipPerformance,
+  buildResponsiblePerformance,
+  filterResponsiblePerformance,
+  type LeadershipOrder,
+  type ResponsibleOrder,
+  type ResponsibleScope,
+} from "./lib/dashboardPerformance";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { peMunicipalities } from "./data/pe-municipalities";
 import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createLeadershipAccess, createMember, createTeamMemberAccess, deleteMember, deleteTeamUser, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resetTeamUserPassword, resolveDuplicateReview, saveOperatingMode, setTeamUserActive, submitCollection, updateMember, updateMemberDetails, type ActivityItem, type DuplicateReview, type MemberInput, type TeamUser } from "./services/data";
@@ -173,25 +180,16 @@ function AccessCredentialsCard({
   );
 }
 
-type RegistrationOrder = "mais" | "menos" | "nome";
-
-function sortRegistrationPerformance<T extends { name: string; total: number }>(
-  items: T[],
-  order: RegistrationOrder,
-) {
-  return [...items].sort((a, b) => {
-    if (order === "nome") return a.name.localeCompare(b.name, "pt-BR");
-    const quantityOrder = order === "menos" ? a.total - b.total : b.total - a.total;
-    return quantityOrder || a.name.localeCompare(b.name, "pt-BR");
-  });
-}
-
 export function MappingDashboard({ data }: MappingProps) {
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([]),
     [teamLoading, setTeamLoading] = useState(isSupabaseConfigured),
     [teamError, setTeamError] = useState(""),
-    [registrationOrder, setRegistrationOrder] = useState<RegistrationOrder>("mais"),
-    [minimumRegistrations, setMinimumRegistrations] = useState(0);
+    [leadershipOrder, setLeadershipOrder] = useState<LeadershipOrder>("mais"),
+    [leadershipMinimum, setLeadershipMinimum] = useState(0),
+    [responsibleOrder, setResponsibleOrder] = useState<ResponsibleOrder>("mais"),
+    [responsibleScope, setResponsibleScope] = useState<ResponsibleScope>("todos"),
+    [showAllLeaderships, setShowAllLeaderships] = useState(false),
+    [showAllResponsibles, setShowAllResponsibles] = useState(false);
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     let active = true;
@@ -201,35 +199,22 @@ export function MappingDashboard({ data }: MappingProps) {
       .finally(() => { if (active) setTeamLoading(false); });
     return () => { active = false; };
   }, []);
-  const contributors = [...new Map(data
-      .filter((member) => member.createdByProfileId && member.createdByName && (member.createdByRole === "administrador" || member.createdByRole === "cadastrador"))
-      .map((member) => [member.createdByProfileId as string, { id:member.createdByProfileId as string, memberId:"", name:member.createdByName as string, role:member.createdByRole as "administrador"|"cadastrador", memberRole:member.createdByRole as "administrador"|"cadastrador", status:"cadastrado", createdAt:"", isSuperAdmin:false, isTeamMember:true } satisfies TeamUser])).values()],
-    visibleTeam = teamUsers.length ? teamUsers : contributors,
-    teamRegistrationCounts = data.reduce<Map<string,number>>((counts, member) => {
-      if (member.createdByProfileId) counts.set(member.createdByProfileId, (counts.get(member.createdByProfileId) ?? 0) + 1);
-      return counts;
-    }, new Map()),
-    teamPerformance = visibleTeam.map((teamMember) => ({
-      ...teamMember,
-      total:teamRegistrationCounts.get(teamMember.id) ?? 0,
-    })),
-    teamCreatedTotal = teamPerformance.reduce((total, member) => total + member.total, 0),
-    unique = uniquePeople(data),
-    ls = leaders(data),
-    directRegistrationCounts = data.reduce<Map<string, number>>((counts, member) => {
-      if (member.parentId) counts.set(member.parentId, (counts.get(member.parentId) ?? 0) + 1);
-      return counts;
-    }, new Map()),
-    leadershipPerformance = sortRegistrationPerformance(ls.map((member) => ({
-      member,
-      name:member.nome,
-      total:directRegistrationCounts.get(member.id) ?? 0,
-      capacity:member.estimatedCapacity ?? 10,
-    })).filter((member) => member.total >= minimumRegistrations), registrationOrder),
-    filteredTeamPerformance = sortRegistrationPerformance(
-      teamPerformance.filter((member) => member.total >= minimumRegistrations),
-      registrationOrder,
+  const ls = leaders(data),
+    leadershipPerformance = buildLeadershipPerformance(data, leadershipOrder)
+      .filter((item) => item.total >= leadershipMinimum),
+    responsiblePerformance = buildResponsiblePerformance(data, teamUsers),
+    filteredResponsiblePerformance = filterResponsiblePerformance(
+      responsiblePerformance.rows,
+      responsibleScope,
+      responsibleOrder,
     ),
+    visibleLeaderships = showAllLeaderships ? leadershipPerformance : leadershipPerformance.slice(0, 5),
+    visibleResponsibles = showAllResponsibles ? filteredResponsiblePerformance : filteredResponsiblePerformance.slice(0, 5),
+    teamPeople = data.filter((member) => member.isTeamMember).length,
+    otherPeople = data.length - teamPeople,
+    activeAccesses = teamUsers.length
+      ? teamUsers.filter((member) => member.status !== "bloqueado" && member.status !== "inativo").length
+      : data.filter((member) => member.hasLogin).length,
     supporters = data.filter((m) => m.role === "participante"),
     confirmedCount = data.filter(confirmed).length,
     capacity = ls.reduce((a, m) => a + (m.estimatedCapacity ?? 0), 0),
@@ -252,7 +237,7 @@ export function MappingDashboard({ data }: MappingProps) {
         }
       />
       <section className="map-stats">
-        <Stat label="Pessoas cadastradas" value={unique.length} hint={`${supporters.length} apoiadores`} tone="featured registrations" />
+        <Stat label="Pessoas cadastradas" value={data.length} hint={`${supporters.length} apoiadores`} tone="featured registrations" />
         <Stat
           label="Total de lideranças"
           value={ls.length}
@@ -279,85 +264,153 @@ export function MappingDashboard({ data }: MappingProps) {
       </button>
       <div className="performance-toolbar">
         <div>
-          <span className="eyebrow">Comparar cadastros</span>
-          <h2>Distribuição dos cadastros</h2>
-          <p>Os filtros abaixo são aplicados aos dois quadros.</p>
-        </div>
-        <div className="performance-controls">
-          <label>
-            <span>Classificar</span>
-            <select value={registrationOrder} onChange={(event) => setRegistrationOrder(event.target.value as RegistrationOrder)}>
-              <option value="mais">Mais cadastros</option>
-              <option value="menos">Menos cadastros</option>
-              <option value="nome">Nome (A–Z)</option>
-            </select>
-          </label>
-          <label>
-            <span>Quantidade mínima</span>
-            <select value={minimumRegistrations} onChange={(event) => setMinimumRegistrations(Number(event.target.value))}>
-              <option value={0}>Todos</option>
-              <option value={1}>1 ou mais</option>
-              <option value={5}>5 ou mais</option>
-              <option value={10}>10 ou mais</option>
-              <option value={25}>25 ou mais</option>
-            </select>
-          </label>
+          <span className="eyebrow">Visão consolidada</span>
+          <h2>Distribuição da base</h2>
+          <p>Liderança mostra vínculo; responsável mostra autoria. A mesma pessoa pode aparecer nos dois quadros.</p>
         </div>
       </div>
+      <section className="distribution-summary" aria-label="Resumo de pessoas e acessos">
+        <article><span>Total da base</span><b>{data.length}</b><small>pessoas preservadas</small></article>
+        <article><span>Equipe</span><b>{teamPeople}</b><small>marcadas como equipe</small></article>
+        <article><span>Demais pessoas</span><b>{otherPeople}</b><small>fora da equipe</small></article>
+        <article><span>Com acesso</span><b>{activeAccesses}</b><small>login ativo</small></article>
+      </section>
       <div className="performance-grid">
         <section className="card leadership-distribution-card">
-          <div className="section-head">
+          <div className="performance-card-head">
             <div>
-              <h2>Distribuição por liderança</h2>
+              <h2>Pessoas por liderança</h2>
               <p>{leadershipPerformance.length} liderança(s) no filtro.</p>
+            </div>
+            <div className="performance-card-controls">
+              <label>
+                <span>Ordenar</span>
+                <select value={leadershipOrder} onChange={(event) => { setLeadershipOrder(event.target.value as LeadershipOrder); setShowAllLeaderships(false); }}>
+                  <option value="mais">Mais vinculadas</option>
+                  <option value="progresso">Maior progresso</option>
+                  <option value="nome">Nome (A–Z)</option>
+                </select>
+              </label>
+              <label>
+                <span>Exibir</span>
+                <select value={leadershipMinimum} onChange={(event) => { setLeadershipMinimum(Number(event.target.value)); setShowAllLeaderships(false); }}>
+                  <option value={0}>Todas</option>
+                  <option value={1}>1 ou mais</option>
+                  <option value={5}>5 ou mais</option>
+                  <option value={10}>10 ou mais</option>
+                </select>
+              </label>
             </div>
           </div>
           {leadershipPerformance.length ? (
-            <div className="leader-bars">
-              {leadershipPerformance.slice(0, 8).map(({ member, total, capacity: estimatedCapacity }) => (
+            <div className="leadership-performance-list">
+              {visibleLeaderships.map(({ member, total, estimatedCapacity, agreedGoal, target, progress }) => (
                 <button
                   key={member.id}
+                  className="leadership-performance-row"
                   onClick={() => navigate(`/liderancas/${member.id}`)}
+                  aria-label={`Abrir ${member.nome}: ${total} pessoa(s) vinculada(s)`}
                 >
-                  <span>
+                  <span className="leadership-row-title">
                     <b>{member.nome}</b>
-                    <small>
-                      {total} de {estimatedCapacity} estimados
-                    </small>
+                    <strong>{total} {total === 1 ? "pessoa vinculada" : "pessoas vinculadas"}</strong>
                   </span>
-                  <i>
-                    <em
-                      style={{
-                        width: `${Math.min((total / estimatedCapacity) * 100, 100)}%`,
-                      }}
-                    />
-                  </i>
-                  <ChevronRight />
+                  <span className="leadership-row-metrics">
+                    <small><span>Estimativa</span><b>{estimatedCapacity ?? "—"}</b></small>
+                    <small><span>Meta</span><b>{agreedGoal ?? "—"}</b></small>
+                    <small><span>Progresso</span><b>{target > 0 ? `${progress}%` : "Sem meta"}</b></small>
+                  </span>
+                  <span className="leadership-progress-line">
+                    <span
+                      className="leadership-progress-track"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.min(progress, 100)}
+                      aria-valuetext={target > 0 ? `${progress}% da meta` : "Sem meta definida"}
+                    ><i style={{ width: `${Math.min(progress, 100)}%` }} /></span>
+                    <ChevronRight aria-hidden="true" />
+                  </span>
                 </button>
               ))}
+              {leadershipPerformance.length > 5 && (
+                <button type="button" className="performance-more" onClick={() => setShowAllLeaderships((current) => !current)}>
+                  {showAllLeaderships ? "Mostrar menos" : `Ver todas (${leadershipPerformance.length})`}
+                </button>
+              )}
             </div>
-          ) : <div className="empty compact">Nenhuma liderança atende à quantidade selecionada.</div>}
+          ) : <div className="empty compact">Nenhuma liderança atende ao filtro selecionado.</div>}
         </section>
         <section className="card team-registration-card">
-          <div className="section-head">
+          <div className="performance-card-head">
             <div>
-              <h2>Cadastros realizados pela equipe</h2>
-              <p>{filteredTeamPerformance.length} membro(s) no filtro.</p>
+              <h2>Cadastros por responsável</h2>
+              <p>{filteredResponsiblePerformance.length} pessoa(s) no recorte.</p>
             </div>
-            <span className="team-registration-total"><b>{teamCreatedTotal}</b> no total</span>
+            <span className="team-registration-total"><b>{responsiblePerformance.attributedTotal}</b> com autoria<small>{responsiblePerformance.unattributedTotal} sem autoria</small></span>
+            <div className="performance-card-controls">
+              <label>
+                <span>Recorte</span>
+                <select value={responsibleScope} onChange={(event) => { setResponsibleScope(event.target.value as ResponsibleScope); setShowAllResponsibles(false); }}>
+                  <option value="todos">Equipe e histórico</option>
+                  <option value="equipe">Equipe atual</option>
+                  <option value="historicos">Responsáveis históricos</option>
+                  <option value="sem_acesso">Sem acesso ativo</option>
+                </select>
+              </label>
+              <label>
+                <span>Ordenar</span>
+                <select value={responsibleOrder} onChange={(event) => { setResponsibleOrder(event.target.value as ResponsibleOrder); setShowAllResponsibles(false); }}>
+                  <option value="mais">Mais cadastros</option>
+                  <option value="menos">Menos cadastros</option>
+                  <option value="nome">Nome (A–Z)</option>
+                </select>
+              </label>
+            </div>
           </div>
-          {teamLoading ? <div className="empty compact" aria-live="polite">Carregando desempenho da equipe…</div> : teamError ? <div className="form-message" role="status">{teamError}</div> : filteredTeamPerformance.length ? (
-            <div className="team-registration-grid">
-              {filteredTeamPerformance.map((teamMember) => (
-                <button key={teamMember.id} onClick={() => navigate(`/cadastros?cadastrador=${teamMember.id}`)} aria-label={`Ver ${teamMember.total} cadastros feitos por ${teamMember.name}`}>
-                  <span className="team-registration-avatar" aria-hidden="true">{teamMember.name.split(" ").slice(0,2).map((part) => part[0]).join("")}</span>
-                  <span><b>{teamMember.name}</b><small>{accountRoleLabel(teamMember.role)}{teamMember.status === "bloqueado" ? " · Inativo" : ""}</small></span>
-                  <strong>{teamMember.total}<small>{teamMember.total === 1 ? "cadastro" : "cadastros"}</small></strong>
-                  <ChevronRight aria-hidden="true"/>
+          {teamError && <div className="form-message performance-warning" role="status">{teamError} A autoria preservada continua visível.</div>}
+          <button className="unattributed-registration-row" onClick={() => navigate("/cadastros?cadastrador=sem_usuario")} aria-label={`Ver ${responsiblePerformance.unattributedTotal} registros sem autoria identificada`}>
+            <span className="unattributed-registration-icon" aria-hidden="true"><History /></span>
+            <span><b>Sem autoria identificada</b><small>Legado, importação ou origem sem usuário</small></span>
+            <strong>{responsiblePerformance.unattributedTotal}<small>{responsiblePerformance.unattributedTotal === 1 ? "cadastro" : "cadastros"}</small></strong>
+            <ChevronRight aria-hidden="true" />
+          </button>
+          {teamLoading ? <div className="empty compact" aria-live="polite">Carregando acessos e responsáveis…</div> : filteredResponsiblePerformance.length ? (
+            <div className="team-registration-grid responsible-registration-grid">
+              {visibleResponsibles.map((responsible) => {
+                const statusLabel = responsible.accessState === "ativo" ? "Acesso ativo"
+                  : responsible.accessState === "inativo" ? "Acesso inativo"
+                    : responsible.accessState === "sem_acesso" ? "Sem acesso"
+                      : "Histórico";
+                const statusTone = responsible.accessState === "ativo" ? "green"
+                  : responsible.accessState === "inativo" || responsible.accessState === "sem_acesso" ? "warning"
+                    : "neutral";
+                return (
+                  <button
+                    key={responsible.key}
+                    disabled={!responsible.profileId}
+                    onClick={() => responsible.profileId && navigate(`/cadastros?cadastrador=${responsible.profileId}`)}
+                    aria-label={`${responsible.name}: ${responsible.total} cadastro(s), ${statusLabel}`}
+                  >
+                    <span className="team-registration-avatar" aria-hidden="true">{responsible.name.split(" ").slice(0,2).map((part) => part[0]).join("")}</span>
+                    <span className="responsible-registration-copy">
+                      <span className="responsible-name-line"><b>{responsible.name}</b>{responsible.isCurrentTeam && <Pill tone="green">Equipe</Pill>}</span>
+                      <small>Função: {accountRoleLabel(responsible.operationalRole)}</small>
+                      <small>{responsible.accessRole ? `Permissão: ${accountRoleLabel(responsible.accessRole)}` : responsible.accessState === "historico" ? "Autoria preservada no histórico" : "Cadastro pessoal mantido, sem login"}</small>
+                    </span>
+                    <Pill tone={statusTone}>{statusLabel}</Pill>
+                    <strong>{responsible.total}<small>{responsible.total === 1 ? "cadastro" : "cadastros"}</small></strong>
+                    {responsible.profileId && <ChevronRight aria-hidden="true" />}
+                  </button>
+                );
+              })}
+              {filteredResponsiblePerformance.length > 5 && (
+                <button type="button" className="performance-more" onClick={() => setShowAllResponsibles((current) => !current)}>
+                  {showAllResponsibles ? "Mostrar menos" : `Ver todos (${filteredResponsiblePerformance.length})`}
                 </button>
-              ))}
+              )}
             </div>
-          ) : <div className="empty compact">Nenhum membro da equipe atende à quantidade selecionada.</div>}
+          ) : <div className="empty compact">Nenhum responsável atende ao recorte selecionado.</div>}
         </section>
       </div>
     </>
