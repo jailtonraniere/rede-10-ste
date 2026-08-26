@@ -35,10 +35,8 @@ import {
   type CsvRow,
 } from "./lib/mapping";
 import {
-  buildLeadershipPerformance,
   buildResponsiblePerformance,
   filterResponsiblePerformance,
-  type LeadershipOrder,
   type ResponsibleOrder,
   type ResponsibleScope,
 } from "./lib/dashboardPerformance";
@@ -185,11 +183,8 @@ export function MappingDashboard({ data }: MappingProps) {
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([]),
     [teamLoading, setTeamLoading] = useState(isSupabaseConfigured),
     [teamError, setTeamError] = useState(""),
-    [leadershipOrder, setLeadershipOrder] = useState<LeadershipOrder>("mais"),
-    [leadershipMinimum, setLeadershipMinimum] = useState(0),
     [responsibleOrder, setResponsibleOrder] = useState<ResponsibleOrder>("mais"),
     [responsibleScope, setResponsibleScope] = useState<ResponsibleScope>("todos"),
-    [showAllLeaderships, setShowAllLeaderships] = useState(false),
     [showAllResponsibles, setShowAllResponsibles] = useState(false);
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -201,15 +196,12 @@ export function MappingDashboard({ data }: MappingProps) {
     return () => { active = false; };
   }, []);
   const ls = leaders(data),
-    leadershipPerformance = buildLeadershipPerformance(data, leadershipOrder)
-      .filter((item) => item.total >= leadershipMinimum),
     responsiblePerformance = buildResponsiblePerformance(data, teamUsers),
     filteredResponsiblePerformance = filterResponsiblePerformance(
       responsiblePerformance.rows,
       responsibleScope,
       responsibleOrder,
     ),
-    visibleLeaderships = showAllLeaderships ? leadershipPerformance : leadershipPerformance.slice(0, 5),
     visibleResponsibles = showAllResponsibles ? filteredResponsiblePerformance : filteredResponsiblePerformance.slice(0, 5),
     teamPeople = data.filter((member) => member.isTeamMember).length,
     otherPeople = data.length - teamPeople,
@@ -267,7 +259,7 @@ export function MappingDashboard({ data }: MappingProps) {
         <div>
           <span className="eyebrow">Visão consolidada</span>
           <h2>Distribuição da base</h2>
-          <p>Liderança mostra vínculo; responsável mostra autoria. A mesma pessoa pode aparecer nos dois quadros.</p>
+          <p>Acompanhe quem realizou os cadastros, incluindo a equipe atual e o histórico preservado.</p>
         </div>
       </div>
       <section className="distribution-summary" aria-label="Resumo de pessoas e acessos">
@@ -276,72 +268,7 @@ export function MappingDashboard({ data }: MappingProps) {
         <article><span>Demais pessoas</span><b>{otherPeople}</b><small>fora da equipe</small></article>
         <article><span>Com acesso</span><b>{activeAccesses}</b><small>login ativo</small></article>
       </section>
-      <div className="performance-grid">
-        <section className="card leadership-distribution-card">
-          <div className="performance-card-head">
-            <div>
-              <h2>Pessoas por liderança</h2>
-              <p>{leadershipPerformance.length} liderança(s) no filtro.</p>
-            </div>
-            <div className="performance-card-controls">
-              <label>
-                <span>Ordenar</span>
-                <select value={leadershipOrder} onChange={(event) => { setLeadershipOrder(event.target.value as LeadershipOrder); setShowAllLeaderships(false); }}>
-                  <option value="mais">Mais vinculadas</option>
-                  <option value="progresso">Maior progresso</option>
-                  <option value="nome">Nome (A–Z)</option>
-                </select>
-              </label>
-              <label>
-                <span>Exibir</span>
-                <select value={leadershipMinimum} onChange={(event) => { setLeadershipMinimum(Number(event.target.value)); setShowAllLeaderships(false); }}>
-                  <option value={0}>Todas</option>
-                  <option value={1}>1 ou mais</option>
-                  <option value={5}>5 ou mais</option>
-                  <option value={10}>10 ou mais</option>
-                </select>
-              </label>
-            </div>
-          </div>
-          {leadershipPerformance.length ? (
-            <div className="leadership-performance-list">
-              {visibleLeaderships.map(({ member, total, estimatedCapacity, agreedGoal, target, progress }) => (
-                <button
-                  key={member.id}
-                  className="leadership-performance-row"
-                  onClick={() => navigate(`/liderancas/${member.id}`)}
-                  aria-label={`Abrir ${member.nome}: ${total} pessoa(s) vinculada(s)`}
-                >
-                  <span className="leadership-row-title">
-                    <b>{member.nome}</b>
-                    <strong>{total} {total === 1 ? "pessoa vinculada" : "pessoas vinculadas"}</strong>
-                  </span>
-                  <span className="leadership-row-metrics">
-                    <small><span>Estimativa</span><b>{estimatedCapacity ?? "—"}</b></small>
-                    <small><span>Meta</span><b>{agreedGoal ?? "—"}</b></small>
-                    <small><span>Progresso</span><b>{target > 0 ? `${progress}%` : "Sem meta"}</b></small>
-                  </span>
-                  <span className="leadership-progress-line">
-                    <span
-                      className="leadership-progress-track"
-                      role="progressbar"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={Math.min(progress, 100)}
-                      aria-valuetext={target > 0 ? `${progress}% da meta` : "Sem meta definida"}
-                    ><i style={{ width: `${Math.min(progress, 100)}%` }} /></span>
-                    <ChevronRight aria-hidden="true" />
-                  </span>
-                </button>
-              ))}
-              {leadershipPerformance.length > 5 && (
-                <button type="button" className="performance-more" onClick={() => setShowAllLeaderships((current) => !current)}>
-                  {showAllLeaderships ? "Mostrar menos" : `Ver todas (${leadershipPerformance.length})`}
-                </button>
-              )}
-            </div>
-          ) : <div className="empty compact">Nenhuma liderança atende ao filtro selecionado.</div>}
-        </section>
+      <div className="performance-grid single-panel">
         <section className="card team-registration-card">
           <div className="performance-card-head">
             <div>
