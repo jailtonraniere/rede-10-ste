@@ -9,6 +9,7 @@ const input = (changes: Partial<MemberInput> = {}): MemberInput => ({
   bairro:'Boa Vista',
   status:'cadastrado',
   role:'lideranca',
+  isTeamMember:true,
   registrationStatus:'pendente_revisao',
   linkStatus:'nao_informado',
   needsCandidateMeeting:true,
@@ -32,15 +33,22 @@ describe('memberPayload', () => {
     })
   })
 
-  it('limpa os campos exclusivos de liderança ao editar como apoiador', () => {
-    expect(memberPayload(input({ role:'participante' }))).toMatchObject({
+  it('mantém uma pessoa comum fora da equipe por padrão explícito', () => {
+    expect(memberPayload(input({ role:'participante', isTeamMember:false, estimatedCapacity:undefined, agreedGoal:undefined }))).toMatchObject({
       member_role:'participante',
+      is_team_member:false,
       needs_candidate_meeting:false,
       estimated_capacity:null,
       agreed_goal:null,
-      goal_deadline:null,
-      estimate_confidence:null,
-      estimate_method:null,
+    })
+  })
+
+  it('desmarcar equipe preserva função e metas históricas da pessoa', () => {
+    expect(memberPayload(input({ isTeamMember:false }))).toMatchObject({
+      member_role:'lideranca',
+      is_team_member:false,
+      estimated_capacity:25,
+      agreed_goal:10,
     })
   })
 })
@@ -59,5 +67,16 @@ describe('memberFromRow', () => {
       createdByName:'Maria Cadastradora',
       createdByRole:'cadastrador',
     })
+  })
+
+  it('identifica equipe e ignora login removido sem apagar a pessoa', () => {
+    const member = memberFromRow({
+      id:'member-2', nome:'Pessoa da equipe', telefone_normalizado:null,
+      municipio:'Recife', bairro:'Centro', status:'cadastrado', member_role:'cadastrador',
+      is_team_member:true, record_origin:'equipe', profile_id:'profile-2', created_at:'2026-08-20T12:00:00Z',
+      access_profile:{ id:'profile-2', telefone:'Não informado', role:'cadastrador', deleted_at:'2026-08-25T12:00:00Z' },
+    })
+
+    expect(member).toMatchObject({ isTeamMember:true, recordOrigin:'equipe', telefone:'Não informado', hasLogin:false })
   })
 })

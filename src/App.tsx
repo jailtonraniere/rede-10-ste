@@ -251,7 +251,7 @@ function LoadingScreen() {
 
 const networkNav = [
   ["/inicio", "Início", Home],
-  ["/cadastro-rapido", "Cadastrar Pessoas", UserPlus],
+  ["/cadastro-rapido", "Cadastrar pessoa", UserPlus],
   ["/rede", "Minha rede", Users],
   ["/arvore", "Visualizar rede", ListTree],
 ] as const;
@@ -269,7 +269,7 @@ function Shell({
     [open, setOpen] = useState(false);
   const mappingItems = [
     ["/mapeamento", "Visão geral", BarChart3],
-    ["/cadastro-rapido", "Cadastrar Pessoas", UserPlus],
+    ["/cadastro-rapido", "Cadastrar pessoa", UserPlus],
     ["/cadastros", "Base de cadastros", FileSpreadsheet],
     ["/liderancas", "Lideranças", Users],
     ["/arvore", "Visualizar rede", ListTree],
@@ -278,7 +278,7 @@ function Shell({
     ["/duplicidades", "Duplicidades", ShieldCheck],
     ["/configuracoes", "Configuração", Settings],
   ] as const;
-  const registrarItems = [["/cadastro-rapido", "Cadastrar Pessoas", UserPlus], ["/cadastros", "Meus cadastros", FileSpreadsheet]] as const;
+  const registrarItems = [["/cadastro-rapido", "Cadastrar pessoa", UserPlus], ["/cadastros", "Meus cadastros", FileSpreadsheet]] as const;
   const items = user.role === "administrador" ? mappingItems : user.role === "cadastrador" ? registrarItems : networkNav;
   const mobileItems = user.role === "administrador"
     ? [["/mapeamento", "Painel", BarChart3], ["/cadastros", "Base", FileSpreadsheet], ["/cadastro-rapido", "Cadastrar", UserPlus], ["/liderancas", "Lideranças", Users]] as const
@@ -1100,7 +1100,7 @@ export default function App() {
                 <Route path="/liderancas" element={isAdmin ? <PeopleList {...mp} /> : <Navigate to="/cadastros" replace />} />
                 <Route path="/cadastros" element={canManageRegistrations ? <RegistrationsPage {...mp} /> : <Navigate to="/inicio" replace />} />
                 <Route path="/cadastros/:id/editar" element={canManageRegistrations ? <EditRegistration {...mp} /> : <Navigate to="/inicio" replace />} />
-                <Route path="/usuarios" element={isAdmin ? <TeamUsers user={user} /> : <Navigate to="/cadastros" replace />} />
+                <Route path="/usuarios" element={isAdmin ? <TeamUsers {...mp} /> : <Navigate to="/cadastros" replace />} />
                 <Route
                   path="/liderancas/:id"
                   element={isAdmin ? <LeaderDetail {...mp} /> : <Navigate to="/cadastros" replace />}
