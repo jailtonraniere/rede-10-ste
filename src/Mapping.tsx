@@ -32,9 +32,17 @@ import {
   parseCsv,
   prepareActivation,
   realization,
-  uniquePeople,
   type CsvRow,
 } from "./lib/mapping";
+import {
+  buildLeadershipPerformance,
+  buildResponsiblePerformance,
+  filterResponsiblePerformance,
+  type LeadershipOrder,
+  type ResponsibleOrder,
+  type ResponsibleScope,
+} from "./lib/dashboardPerformance";
+import { newPersonTeamFields, resolveTeamManagedFields } from "./lib/teamAdministration";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { peMunicipalities } from "./data/pe-municipalities";
 import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createLeadershipAccess, createMember, createTeamMemberAccess, deleteMember, deleteTeamUser, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resetTeamUserPassword, resolveDuplicateReview, saveOperatingMode, setTeamUserActive, submitCollection, updateMember, updateMemberDetails, type ActivityItem, type DuplicateReview, type MemberInput, type TeamUser } from "./services/data";
@@ -173,25 +181,16 @@ function AccessCredentialsCard({
   );
 }
 
-type RegistrationOrder = "mais" | "menos" | "nome";
-
-function sortRegistrationPerformance<T extends { name: string; total: number }>(
-  items: T[],
-  order: RegistrationOrder,
-) {
-  return [...items].sort((a, b) => {
-    if (order === "nome") return a.name.localeCompare(b.name, "pt-BR");
-    const quantityOrder = order === "menos" ? a.total - b.total : b.total - a.total;
-    return quantityOrder || a.name.localeCompare(b.name, "pt-BR");
-  });
-}
-
 export function MappingDashboard({ data }: MappingProps) {
   const [teamUsers, setTeamUsers] = useState<TeamUser[]>([]),
     [teamLoading, setTeamLoading] = useState(isSupabaseConfigured),
     [teamError, setTeamError] = useState(""),
-    [registrationOrder, setRegistrationOrder] = useState<RegistrationOrder>("mais"),
-    [minimumRegistrations, setMinimumRegistrations] = useState(0);
+    [leadershipOrder, setLeadershipOrder] = useState<LeadershipOrder>("mais"),
+    [leadershipMinimum, setLeadershipMinimum] = useState(0),
+    [responsibleOrder, setResponsibleOrder] = useState<ResponsibleOrder>("mais"),
+    [responsibleScope, setResponsibleScope] = useState<ResponsibleScope>("todos"),
+    [showAllLeaderships, setShowAllLeaderships] = useState(false),
+    [showAllResponsibles, setShowAllResponsibles] = useState(false);
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     let active = true;
@@ -201,35 +200,22 @@ export function MappingDashboard({ data }: MappingProps) {
       .finally(() => { if (active) setTeamLoading(false); });
     return () => { active = false; };
   }, []);
-  const contributors = [...new Map(data
-      .filter((member) => member.createdByProfileId && member.createdByName && (member.createdByRole === "administrador" || member.createdByRole === "cadastrador"))
-      .map((member) => [member.createdByProfileId as string, { id:member.createdByProfileId as string, memberId:"", name:member.createdByName as string, role:member.createdByRole as "administrador"|"cadastrador", memberRole:member.createdByRole as "administrador"|"cadastrador", status:"cadastrado", createdAt:"", isSuperAdmin:false, isTeamMember:true } satisfies TeamUser])).values()],
-    visibleTeam = teamUsers.length ? teamUsers : contributors,
-    teamRegistrationCounts = data.reduce<Map<string,number>>((counts, member) => {
-      if (member.createdByProfileId) counts.set(member.createdByProfileId, (counts.get(member.createdByProfileId) ?? 0) + 1);
-      return counts;
-    }, new Map()),
-    teamPerformance = visibleTeam.map((teamMember) => ({
-      ...teamMember,
-      total:teamRegistrationCounts.get(teamMember.id) ?? 0,
-    })),
-    teamCreatedTotal = teamPerformance.reduce((total, member) => total + member.total, 0),
-    unique = uniquePeople(data),
-    ls = leaders(data),
-    directRegistrationCounts = data.reduce<Map<string, number>>((counts, member) => {
-      if (member.parentId) counts.set(member.parentId, (counts.get(member.parentId) ?? 0) + 1);
-      return counts;
-    }, new Map()),
-    leadershipPerformance = sortRegistrationPerformance(ls.map((member) => ({
-      member,
-      name:member.nome,
-      total:directRegistrationCounts.get(member.id) ?? 0,
-      capacity:member.estimatedCapacity ?? 10,
-    })).filter((member) => member.total >= minimumRegistrations), registrationOrder),
-    filteredTeamPerformance = sortRegistrationPerformance(
-      teamPerformance.filter((member) => member.total >= minimumRegistrations),
-      registrationOrder,
+  const ls = leaders(data),
+    leadershipPerformance = buildLeadershipPerformance(data, leadershipOrder)
+      .filter((item) => item.total >= leadershipMinimum),
+    responsiblePerformance = buildResponsiblePerformance(data, teamUsers),
+    filteredResponsiblePerformance = filterResponsiblePerformance(
+      responsiblePerformance.rows,
+      responsibleScope,
+      responsibleOrder,
     ),
+    visibleLeaderships = showAllLeaderships ? leadershipPerformance : leadershipPerformance.slice(0, 5),
+    visibleResponsibles = showAllResponsibles ? filteredResponsiblePerformance : filteredResponsiblePerformance.slice(0, 5),
+    teamPeople = data.filter((member) => member.isTeamMember).length,
+    otherPeople = data.length - teamPeople,
+    activeAccesses = teamUsers.length
+      ? teamUsers.filter((member) => member.status !== "bloqueado" && member.status !== "inativo").length
+      : data.filter((member) => member.hasLogin).length,
     supporters = data.filter((m) => m.role === "participante"),
     confirmedCount = data.filter(confirmed).length,
     capacity = ls.reduce((a, m) => a + (m.estimatedCapacity ?? 0), 0),
@@ -252,7 +238,7 @@ export function MappingDashboard({ data }: MappingProps) {
         }
       />
       <section className="map-stats">
-        <Stat label="Pessoas cadastradas" value={unique.length} hint={`${supporters.length} apoiadores`} tone="featured registrations" />
+        <Stat label="Pessoas cadastradas" value={data.length} hint={`${supporters.length} apoiadores`} tone="featured registrations" />
         <Stat
           label="Total de lideranças"
           value={ls.length}
@@ -279,85 +265,153 @@ export function MappingDashboard({ data }: MappingProps) {
       </button>
       <div className="performance-toolbar">
         <div>
-          <span className="eyebrow">Comparar cadastros</span>
-          <h2>Distribuição dos cadastros</h2>
-          <p>Os filtros abaixo são aplicados aos dois quadros.</p>
-        </div>
-        <div className="performance-controls">
-          <label>
-            <span>Classificar</span>
-            <select value={registrationOrder} onChange={(event) => setRegistrationOrder(event.target.value as RegistrationOrder)}>
-              <option value="mais">Mais cadastros</option>
-              <option value="menos">Menos cadastros</option>
-              <option value="nome">Nome (A–Z)</option>
-            </select>
-          </label>
-          <label>
-            <span>Quantidade mínima</span>
-            <select value={minimumRegistrations} onChange={(event) => setMinimumRegistrations(Number(event.target.value))}>
-              <option value={0}>Todos</option>
-              <option value={1}>1 ou mais</option>
-              <option value={5}>5 ou mais</option>
-              <option value={10}>10 ou mais</option>
-              <option value={25}>25 ou mais</option>
-            </select>
-          </label>
+          <span className="eyebrow">Visão consolidada</span>
+          <h2>Distribuição da base</h2>
+          <p>Liderança mostra vínculo; responsável mostra autoria. A mesma pessoa pode aparecer nos dois quadros.</p>
         </div>
       </div>
+      <section className="distribution-summary" aria-label="Resumo de pessoas e acessos">
+        <article><span>Total da base</span><b>{data.length}</b><small>pessoas preservadas</small></article>
+        <article><span>Equipe</span><b>{teamPeople}</b><small>marcadas como equipe</small></article>
+        <article><span>Demais pessoas</span><b>{otherPeople}</b><small>fora da equipe</small></article>
+        <article><span>Com acesso</span><b>{activeAccesses}</b><small>login ativo</small></article>
+      </section>
       <div className="performance-grid">
         <section className="card leadership-distribution-card">
-          <div className="section-head">
+          <div className="performance-card-head">
             <div>
-              <h2>Distribuição por liderança</h2>
+              <h2>Pessoas por liderança</h2>
               <p>{leadershipPerformance.length} liderança(s) no filtro.</p>
+            </div>
+            <div className="performance-card-controls">
+              <label>
+                <span>Ordenar</span>
+                <select value={leadershipOrder} onChange={(event) => { setLeadershipOrder(event.target.value as LeadershipOrder); setShowAllLeaderships(false); }}>
+                  <option value="mais">Mais vinculadas</option>
+                  <option value="progresso">Maior progresso</option>
+                  <option value="nome">Nome (A–Z)</option>
+                </select>
+              </label>
+              <label>
+                <span>Exibir</span>
+                <select value={leadershipMinimum} onChange={(event) => { setLeadershipMinimum(Number(event.target.value)); setShowAllLeaderships(false); }}>
+                  <option value={0}>Todas</option>
+                  <option value={1}>1 ou mais</option>
+                  <option value={5}>5 ou mais</option>
+                  <option value={10}>10 ou mais</option>
+                </select>
+              </label>
             </div>
           </div>
           {leadershipPerformance.length ? (
-            <div className="leader-bars">
-              {leadershipPerformance.slice(0, 8).map(({ member, total, capacity: estimatedCapacity }) => (
+            <div className="leadership-performance-list">
+              {visibleLeaderships.map(({ member, total, estimatedCapacity, agreedGoal, target, progress }) => (
                 <button
                   key={member.id}
+                  className="leadership-performance-row"
                   onClick={() => navigate(`/liderancas/${member.id}`)}
+                  aria-label={`Abrir ${member.nome}: ${total} pessoa(s) vinculada(s)`}
                 >
-                  <span>
+                  <span className="leadership-row-title">
                     <b>{member.nome}</b>
-                    <small>
-                      {total} de {estimatedCapacity} estimados
-                    </small>
+                    <strong>{total} {total === 1 ? "pessoa vinculada" : "pessoas vinculadas"}</strong>
                   </span>
-                  <i>
-                    <em
-                      style={{
-                        width: `${Math.min((total / estimatedCapacity) * 100, 100)}%`,
-                      }}
-                    />
-                  </i>
-                  <ChevronRight />
+                  <span className="leadership-row-metrics">
+                    <small><span>Estimativa</span><b>{estimatedCapacity ?? "—"}</b></small>
+                    <small><span>Meta</span><b>{agreedGoal ?? "—"}</b></small>
+                    <small><span>Progresso</span><b>{target > 0 ? `${progress}%` : "Sem meta"}</b></small>
+                  </span>
+                  <span className="leadership-progress-line">
+                    <span
+                      className="leadership-progress-track"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.min(progress, 100)}
+                      aria-valuetext={target > 0 ? `${progress}% da meta` : "Sem meta definida"}
+                    ><i style={{ width: `${Math.min(progress, 100)}%` }} /></span>
+                    <ChevronRight aria-hidden="true" />
+                  </span>
                 </button>
               ))}
+              {leadershipPerformance.length > 5 && (
+                <button type="button" className="performance-more" onClick={() => setShowAllLeaderships((current) => !current)}>
+                  {showAllLeaderships ? "Mostrar menos" : `Ver todas (${leadershipPerformance.length})`}
+                </button>
+              )}
             </div>
-          ) : <div className="empty compact">Nenhuma liderança atende à quantidade selecionada.</div>}
+          ) : <div className="empty compact">Nenhuma liderança atende ao filtro selecionado.</div>}
         </section>
         <section className="card team-registration-card">
-          <div className="section-head">
+          <div className="performance-card-head">
             <div>
-              <h2>Cadastros realizados pela equipe</h2>
-              <p>{filteredTeamPerformance.length} membro(s) no filtro.</p>
+              <h2>Cadastros por responsável</h2>
+              <p>{filteredResponsiblePerformance.length} pessoa(s) no recorte.</p>
             </div>
-            <span className="team-registration-total"><b>{teamCreatedTotal}</b> no total</span>
+            <span className="team-registration-total"><b>{responsiblePerformance.attributedTotal}</b> com autoria<small>{responsiblePerformance.unattributedTotal} sem autoria</small></span>
+            <div className="performance-card-controls">
+              <label>
+                <span>Recorte</span>
+                <select value={responsibleScope} onChange={(event) => { setResponsibleScope(event.target.value as ResponsibleScope); setShowAllResponsibles(false); }}>
+                  <option value="todos">Equipe e histórico</option>
+                  <option value="equipe">Equipe atual</option>
+                  <option value="historicos">Responsáveis históricos</option>
+                  <option value="sem_acesso">Sem acesso ativo</option>
+                </select>
+              </label>
+              <label>
+                <span>Ordenar</span>
+                <select value={responsibleOrder} onChange={(event) => { setResponsibleOrder(event.target.value as ResponsibleOrder); setShowAllResponsibles(false); }}>
+                  <option value="mais">Mais cadastros</option>
+                  <option value="menos">Menos cadastros</option>
+                  <option value="nome">Nome (A–Z)</option>
+                </select>
+              </label>
+            </div>
           </div>
-          {teamLoading ? <div className="empty compact" aria-live="polite">Carregando desempenho da equipe…</div> : teamError ? <div className="form-message" role="status">{teamError}</div> : filteredTeamPerformance.length ? (
-            <div className="team-registration-grid">
-              {filteredTeamPerformance.map((teamMember) => (
-                <button key={teamMember.id} onClick={() => navigate(`/cadastros?cadastrador=${teamMember.id}`)} aria-label={`Ver ${teamMember.total} cadastros feitos por ${teamMember.name}`}>
-                  <span className="team-registration-avatar" aria-hidden="true">{teamMember.name.split(" ").slice(0,2).map((part) => part[0]).join("")}</span>
-                  <span><b>{teamMember.name}</b><small>{accountRoleLabel(teamMember.role)}{teamMember.status === "bloqueado" ? " · Inativo" : ""}</small></span>
-                  <strong>{teamMember.total}<small>{teamMember.total === 1 ? "cadastro" : "cadastros"}</small></strong>
-                  <ChevronRight aria-hidden="true"/>
+          {teamError && <div className="form-message performance-warning" role="status">{teamError} A autoria preservada continua visível.</div>}
+          <button className="unattributed-registration-row" onClick={() => navigate("/cadastros?cadastrador=sem_usuario")} aria-label={`Ver ${responsiblePerformance.unattributedTotal} registros sem autoria identificada`}>
+            <span className="unattributed-registration-icon" aria-hidden="true"><History /></span>
+            <span><b>Sem autoria identificada</b><small>Legado, importação ou origem sem usuário</small></span>
+            <strong>{responsiblePerformance.unattributedTotal}<small>{responsiblePerformance.unattributedTotal === 1 ? "cadastro" : "cadastros"}</small></strong>
+            <ChevronRight aria-hidden="true" />
+          </button>
+          {teamLoading ? <div className="empty compact" aria-live="polite">Carregando acessos e responsáveis…</div> : filteredResponsiblePerformance.length ? (
+            <div className="team-registration-grid responsible-registration-grid">
+              {visibleResponsibles.map((responsible) => {
+                const statusLabel = responsible.accessState === "ativo" ? "Acesso ativo"
+                  : responsible.accessState === "inativo" ? "Acesso inativo"
+                    : responsible.accessState === "sem_acesso" ? "Sem acesso"
+                      : "Histórico";
+                const statusTone = responsible.accessState === "ativo" ? "green"
+                  : responsible.accessState === "inativo" || responsible.accessState === "sem_acesso" ? "warning"
+                    : "neutral";
+                return (
+                  <button
+                    key={responsible.key}
+                    disabled={!responsible.profileId}
+                    onClick={() => responsible.profileId && navigate(`/cadastros?cadastrador=${responsible.profileId}`)}
+                    aria-label={`${responsible.name}: ${responsible.total} cadastro(s), ${statusLabel}`}
+                  >
+                    <span className="team-registration-avatar" aria-hidden="true">{responsible.name.split(" ").slice(0,2).map((part) => part[0]).join("")}</span>
+                    <span className="responsible-registration-copy">
+                      <span className="responsible-name-line"><b>{responsible.name}</b>{responsible.isCurrentTeam && <Pill tone="green">Equipe</Pill>}</span>
+                      <small>Função: {accountRoleLabel(responsible.operationalRole)}</small>
+                      <small>{responsible.accessRole ? `Permissão: ${accountRoleLabel(responsible.accessRole)}` : responsible.accessState === "historico" ? "Autoria preservada no histórico" : "Cadastro pessoal mantido, sem login"}</small>
+                    </span>
+                    <Pill tone={statusTone}>{statusLabel}</Pill>
+                    <strong>{responsible.total}<small>{responsible.total === 1 ? "cadastro" : "cadastros"}</small></strong>
+                    {responsible.profileId && <ChevronRight aria-hidden="true" />}
+                  </button>
+                );
+              })}
+              {filteredResponsiblePerformance.length > 5 && (
+                <button type="button" className="performance-more" onClick={() => setShowAllResponsibles((current) => !current)}>
+                  {showAllResponsibles ? "Mostrar menos" : `Ver todos (${filteredResponsiblePerformance.length})`}
                 </button>
-              ))}
+              )}
             </div>
-          ) : <div className="empty compact">Nenhum membro da equipe atende à quantidade selecionada.</div>}
+          ) : <div className="empty compact">Nenhum responsável atende ao recorte selecionado.</div>}
         </section>
       </div>
     </>
@@ -602,80 +656,45 @@ const teamRoleOptions: { value:Role; label:string }[] = [
 export function QuickCreate({ data, setData, user }: MappingProps) {
   const navigate = useNavigate(),
     isOwnNetworkUser = user?.role === "lideranca" || user?.role === "mobilizador",
-    canManageTeam = user?.role === "administrador",
     ownParentId = user?.memberId ?? "",
     draftKey = "rede10:cadastro-rapido",
     [draft] = useState<Record<string,string>>(() => { try { return JSON.parse(sessionStorage.getItem(draftKey) ?? "{}"); } catch { return {}; } }),
-    [isTeamMember, setIsTeamMember] = useState(canManageTeam && draft.isTeamMember === "true"),
-    [type, setType] = useState<Role>((draft.type as Role) || "participante"),
-    [createAccess, setCreateAccess] = useState(draft.createAccess === "true"),
-    [accessRole, setAccessRole] = useState<Role>((draft.accessRole as Role) || "cadastrador"),
-    [credentials, setCredentials] = useState<TemporaryAccess|null>(null),
-    [savedMessage, setSavedMessage] = useState(""),
-    [completed, setCompleted] = useState(false),
     [saving, setSaving] = useState(false),
     [error, setError] = useState("");
 
   function remember(form: HTMLFormElement) {
     const values = Object.fromEntries([...new FormData(form).entries()].map(([key,value]) => [key,String(value)]));
-    for (const name of ["needsCandidateMeeting","isTeamMember","createAccess"]) {
-      const checkbox = form.elements.namedItem(name) as HTMLInputElement | null;
-      if (checkbox) values[name] = String(checkbox.checked);
-    }
     sessionStorage.setItem(draftKey, JSON.stringify(values));
   }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (completed) return;
     if (isOwnNetworkUser && !ownParentId) {
       setError("Seu acesso ainda não está vinculado à sua liderança. Solicite a correção à administração.");
       return;
     }
     const f = new FormData(e.currentTarget),
-      phone = String(f.get("telefone")),
-      registrationType: Role = isTeamMember ? type : "participante",
-      wantsAccess = canManageTeam && isTeamMember && createAccess;
+      phone = String(f.get("telefone"));
     const isDuplicate = Boolean(duplicateCandidates({ nome:String(f.get("nome")), telefone:phone, email:String(f.get("email")) || undefined, bairro:String(f.get("bairro")) }, data).length);
     if (isDuplicate) setError("Possível duplicidade encontrada. O registro foi enviado para revisão, sem exclusão automática.");
     else setError("");
 
-    const capacity = Number(f.get("capacity")), goal = Number(f.get("goal"));
     const member: Member = {
       id:crypto.randomUUID(), nome:String(f.get("nome")), telefone:phone,
       email:String(f.get("email")) || undefined, municipio:String(f.get("municipio")), bairro:String(f.get("bairro")),
-      role:registrationType, isTeamMember, recordOrigin:"base",
-      parentId:isOwnNetworkUser ? ownParentId : isTeamMember ? String(f.get("parentId")) || undefined : undefined,
+      ...newPersonTeamFields, recordOrigin:"base",
+      parentId:isOwnNetworkUser ? ownParentId : undefined,
       source:isOwnNetworkUser ? "Cadastro pela liderança" : "Cadastro administrativo",
       linkStatus:"nao_informado",
-      needsCandidateMeeting:isTeamMember && registrationType === "lideranca" && Boolean(f.get("needsCandidateMeeting")),
-      notes:String(f.get("notes")), estimatedCapacity:isTeamMember && capacity > 0 ? capacity : undefined,
-      agreedGoal:isTeamMember && goal > 0 ? goal : undefined,
+      notes:String(f.get("notes")),
       registrationStatus:isDuplicate ? "duplicado" : "pendente_revisao", status:"cadastrado",
       joinedAt:new Date().toISOString().slice(0,10), lastActivity:new Date().toISOString().slice(0,10), inviteCode:"", hasLogin:false,
     };
 
-    setSaving(true); setCredentials(null); setSavedMessage("");
+    setSaving(true);
     try {
       const saved = isSupabaseConfigured ? await createMember(member) : member;
       setData((current) => [...current, saved]);
-      if (wantsAccess && !isDuplicate) {
-        try {
-          const result = isSupabaseConfigured
-            ? await createTeamMemberAccess({ memberId:saved.id, login:String(f.get("accessLogin")), role:accessRole })
-            : { username:String(f.get("accessLogin")), temporaryPassword:"R10-demo-temporaria", role:accessRole };
-          setData((current) => current.map((item) => item.id === saved.id ? { ...item, hasLogin:true, accessUsername:result.username, accessRole } : item));
-          setCredentials({ username:result.username, password:result.temporaryPassword });
-          setSavedMessage(`${saved.nome} foi cadastrado(a) uma única vez e recebeu acesso à equipe.`);
-          setCompleted(true);
-          sessionStorage.removeItem(draftKey);
-          return;
-        } catch (accessError) {
-          setError(`A pessoa foi salva, mas o acesso não foi criado: ${accessError instanceof Error ? accessError.message : "falha desconhecida"}`);
-          sessionStorage.removeItem(draftKey);
-          return;
-        }
-      }
       if (!isDuplicate) {
         sessionStorage.removeItem(draftKey);
         navigate(isOwnNetworkUser ? "/rede" : user?.role === "cadastrador" ? "/cadastros" : "/cadastros");
@@ -689,7 +708,7 @@ export function QuickCreate({ data, setData, user }: MappingProps) {
   }
 
   return <>
-    <Head title="Cadastrar pessoa" description={isOwnNetworkUser ? "Adicione uma pessoa diretamente à sua rede. O rascunho fica salvo neste aparelho até a conclusão." : "Todo cadastro começa pela pessoa. A participação na equipe e o acesso são opcionais."}/>
+    <Head title="Cadastrar pessoa" description={isOwnNetworkUser ? "Adicione uma pessoa diretamente à sua rede. O rascunho fica salvo neste aparelho até a conclusão." : "Todo cadastro começa como pessoa da base. Equipe e função são definidas depois pela administração."}/>
     <section className="card form-card">
       <form className="mapping-form sectioned-form" onSubmit={submit} onInput={(event)=>remember(event.currentTarget)} onChange={(event)=>remember(event.currentTarget)}>
         <fieldset className="form-section span-2"><legend>Dados da pessoa</legend><p>Informações básicas para identificar um único cadastro.</p><div className="form-section-grid">
@@ -700,29 +719,11 @@ export function QuickCreate({ data, setData, user }: MappingProps) {
           <Field label="Bairro ou comunidade" name="bairro" defaultValue={draft.bairro} required/>
         </div></fieldset>
 
-        <fieldset className="form-section span-2 team-membership-section"><legend>Participação na equipe</legend><p>A pessoa continua na mesma base, com ou sem acesso ao sistema.</p>
-          <label className="check team-membership-toggle"><input type="checkbox" name="isTeamMember" checked={isTeamMember} disabled={!canManageTeam} onChange={(event)=>{setIsTeamMember(event.target.checked);if(!event.target.checked)setCreateAccess(false)}}/><span><b>Faz parte da equipe</b><small>{canManageTeam?"Marque para informar função, metas, vínculo e acesso.":"A administração pode marcar esta opção depois, sem duplicar o cadastro."}</small></span></label>
-          {isTeamMember && <div className="form-section-grid team-fields">
-            <label>Função ou perfil<select value={type} onChange={(event)=>setType(event.target.value as Role)} name="type">{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-            <label>Liderança ou vínculo responsável<select name="parentId" defaultValue={draft.parentId || ""}><option value="">Sem liderança responsável</option>{leaders(data).map((member)=><option key={member.id} value={member.id}>{member.nome}</option>)}</select></label>
-            {type === "lideranca" && <label className="check"><input type="checkbox" name="needsCandidateMeeting" defaultChecked={draft.needsCandidateMeeting === "true"}/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
-            <Field label="Capacidade estimada (opcional)" name="capacity" type="number" min="1" defaultValue={draft.capacity}/>
-            <Field label="Meta inicial (opcional)" name="goal" type="number" min="1" defaultValue={draft.goal}/>
-          </div>}
-        </fieldset>
-
-        {canManageTeam && isTeamMember && <fieldset className="form-section span-2"><legend>Acesso e convite</legend><p>O acesso é ligado a esta mesma pessoa e pode ser gerenciado depois em Usuários da equipe.</p>
-          <label className="check"><input type="checkbox" name="createAccess" checked={createAccess} onChange={(event)=>setCreateAccess(event.target.checked)}/><span><b>Criar acesso agora</b><small>Gera uma senha temporária para o primeiro acesso.</small></span></label>
-          {createAccess && <div className="form-section-grid team-fields"><Field label="Nome de usuário ou e-mail" name="accessLogin" defaultValue={draft.accessLogin} required placeholder="Ex.: maria.silva"/><label>Permissões de acesso<select name="accessRole" value={accessRole} onChange={(event)=>setAccessRole(event.target.value as Role)}>{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div>}
-        </fieldset>}
-
         {isOwnNetworkUser && <fieldset className="form-section span-2"><legend>Vínculo na rede</legend><div className="network-owner-link"><UserCheck/><span><b>Cadastro na sua rede</b><small>A pessoa ficará diretamente vinculada a {user?.nome}.</small></span></div></fieldset>}
         <fieldset className="form-section span-2"><legend>Observações</legend><label>Informações adicionais<textarea name="notes" rows={3} defaultValue={draft.notes}/></label></fieldset>
         {error&&<div className="form-message span-2" role="alert">{error}</div>}
-        {savedMessage&&<div className="form-message span-2" role="status">{savedMessage}</div>}
-        {credentials&&<div className="span-2"><AccessCredentialsCard credentials={credentials} audience="equipe" onCopied={()=>setSavedMessage("Endereço, login e senha temporária copiados.")}/></div>}
         {isOwnNetworkUser&&!ownParentId&&!error&&<div className="form-message span-2" role="alert">Seu acesso ainda não está vinculado à sua liderança. Procure a administração antes de cadastrar.</div>}
-        <div className="form-actions span-2"><button type="button" className="secondary" onClick={()=>navigate(-1)} disabled={saving}>Cancelar</button><button className="primary register-primary" disabled={saving||completed||(isOwnNetworkUser&&!ownParentId)}><UserCheck/>{saving?"Salvando…":completed?"Pessoa salva":"Salvar pessoa"}</button></div>
+        <div className="form-actions span-2"><button type="button" className="secondary" onClick={()=>navigate(-1)} disabled={saving}>Cancelar</button><button className="primary register-primary" disabled={saving||(isOwnNetworkUser&&!ownParentId)}><UserCheck/>{saving?"Salvando…":"Salvar pessoa"}</button></div>
       </form>
     </section>
   </>;
@@ -743,6 +744,7 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
   const { id } = useParams(),
     navigate = useNavigate(),
     member = data.find((item) => item.id === id),
+    canManageTeam = user?.role === "administrador",
     draftKey = `rede10:editar-cadastro:${id ?? "desconhecido"}`,
     [draft] = useState<Record<string,string>>(() => { try { return JSON.parse(sessionStorage.getItem(draftKey) ?? "{}"); } catch { return {}; } }),
     [type, setType] = useState<Role>((draft.type as Role) || member?.role || "participante"),
@@ -773,25 +775,29 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
       phone = String(form.get("telefone")),
       capacity = Number(form.get("capacity")),
       goal = Number(form.get("goal")),
+      requestedTeamFields = {
+        role: type,
+        isTeamMember,
+        parentId: isTeamMember ? String(form.get("parentId")) || undefined : editableMember.parentId,
+        needsCandidateMeeting: isTeamMember ? type === "lideranca" && Boolean(form.get("needsCandidateMeeting")) : editableMember.needsCandidateMeeting,
+        estimatedCapacity: isTeamMember ? capacity > 0 ? capacity : undefined : editableMember.estimatedCapacity,
+        agreedGoal: isTeamMember ? goal > 0 ? goal : undefined : editableMember.agreedGoal,
+      },
+      teamFields = resolveTeamManagedFields(editableMember, user?.role, requestedTeamFields),
       input: MemberInput = {
         nome: String(form.get("nome")),
         telefone: phone,
         email: String(form.get("email")) || undefined,
         municipio: String(form.get("municipio")),
         bairro: String(form.get("bairro")),
-        role: type,
-        isTeamMember,
+        ...teamFields,
         recordOrigin: editableMember.recordOrigin,
-        parentId: isTeamMember ? String(form.get("parentId")) || undefined : editableMember.parentId,
         status: editableMember.status,
         registrationStatus: editableMember.registrationStatus,
         linkStatus: editableMember.linkStatus,
         source: editableMember.source,
         contactAuthorized: editableMember.contactAuthorized,
-        needsCandidateMeeting: isTeamMember ? type === "lideranca" && Boolean(form.get("needsCandidateMeeting")) : editableMember.needsCandidateMeeting,
         notes: String(form.get("notes")) || undefined,
-        estimatedCapacity: isTeamMember ? capacity > 0 ? capacity : undefined : editableMember.estimatedCapacity,
-        agreedGoal: isTeamMember ? goal > 0 ? goal : undefined : editableMember.agreedGoal,
         goalDeadline: editableMember.goalDeadline,
         confidence: editableMember.confidence,
         estimateMethod: editableMember.estimateMethod,
@@ -801,7 +807,7 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
     try {
       let saved: Member = isSupabaseConfigured ? await updateMemberDetails(editableMember.id, input) : { ...editableMember, ...input, lastActivity:new Date().toISOString().slice(0,10) };
       setData((current) => current.map((item) => item.id === editableMember.id ? saved : item));
-      if (user?.role === "administrador" && isTeamMember && createAccess && !editableMember.hasLogin) {
+      if (canManageTeam && isTeamMember && createAccess && !editableMember.hasLogin) {
         const access = isSupabaseConfigured
           ? await createTeamMemberAccess({ memberId:editableMember.id, login:String(form.get("accessLogin")), role:accessRole })
           : { username:String(form.get("accessLogin")), temporaryPassword:"R10-demo-temporaria" };
@@ -810,7 +816,7 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
       }
       setData((current) => current.map((item) => item.id === editableMember.id ? saved : item));
       sessionStorage.removeItem(draftKey);
-      if (!credentials && !(user?.role === "administrador" && isTeamMember && createAccess && !editableMember.hasLogin)) navigate(-1);
+      if (!credentials && !(canManageTeam && isTeamMember && createAccess && !editableMember.hasLogin)) navigate(-1);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Não foi possível atualizar o cadastro.";
       setError(message.includes("network_members_active_phone") || message.includes("network_members_email_unique")
@@ -832,17 +838,17 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
           <CityField defaultValue={draft.municipio ?? editableMember.municipio}/>
           <Field label="Bairro ou comunidade" name="bairro" defaultValue={draft.bairro ?? editableMember.bairro} required/>
         </div></fieldset>
-        <fieldset className="form-section span-2 team-membership-section"><legend>Participação na equipe</legend><p>Desmarcar não apaga a pessoa, seus vínculos, metas, histórico ou acesso.</p>
-          <label className="check team-membership-toggle"><input type="checkbox" name="isTeamMember" checked={isTeamMember} disabled={user?.role!=="administrador"} onChange={(event)=>{setIsTeamMember(event.target.checked);if(!event.target.checked)setCreateAccess(false)}}/><span><b>Faz parte da equipe</b><small>{user?.role==="administrador"?"A alteração afeta somente a classificação da pessoa.":"Somente a administração pode alterar esta opção."}</small></span></label>
+        {canManageTeam&&<fieldset className="form-section span-2 team-membership-section"><legend>Participação na equipe</legend><p>Disponível somente para administradores. Desmarcar não apaga a pessoa, seus vínculos, metas, histórico ou acesso.</p>
+          <label className="check team-membership-toggle"><input type="checkbox" name="isTeamMember" checked={isTeamMember} onChange={(event)=>{setIsTeamMember(event.target.checked);if(!event.target.checked)setCreateAccess(false)}}/><span><b>Faz parte da equipe</b><small>A alteração afeta somente a classificação da pessoa.</small></span></label>
           {isTeamMember&&<div className="form-section-grid team-fields">
-            <label>Função ou perfil<select value={type} disabled={user?.role!=="administrador"} onChange={(event)=>setType(event.target.value as Role)} name="type">{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <label>Função ou perfil<select value={type} onChange={(event)=>setType(event.target.value as Role)} name="type">{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
             <label>Liderança ou vínculo responsável<select name="parentId" defaultValue={draft.parentId ?? editableMember.parentId ?? ""}><option value="">Sem liderança responsável</option>{leaderOptions.map((leader)=><option value={leader.id} key={leader.id}>{leader.nome}</option>)}</select></label>
             {type==="lideranca"&&<label className="check"><input type="checkbox" name="needsCandidateMeeting" defaultChecked={draft.needsCandidateMeeting!==undefined?draft.needsCandidateMeeting==="true":editableMember.needsCandidateMeeting}/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
             <Field label="Capacidade estimada (opcional)" name="capacity" type="number" min="1" defaultValue={draft.capacity ?? editableMember.estimatedCapacity ?? ""}/>
             <Field label="Meta inicial (opcional)" name="goal" type="number" min="1" defaultValue={draft.goal ?? editableMember.agreedGoal ?? ""}/>
           </div>}
-        </fieldset>
-        {user?.role==="administrador"&&isTeamMember&&<fieldset className="form-section span-2"><legend>Acesso e permissões</legend>{editableMember.hasLogin?<div className="network-owner-link"><KeyRound/><span><b>Acesso já vinculado</b><small>Permissão atual: {accountRoleLabel(editableMember.accessRole ?? editableMember.role)}. Alterações de permissão, senha e status ficam em Usuários da equipe.</small></span></div>:<><label className="check"><input type="checkbox" name="createAccess" checked={createAccess} onChange={(event)=>setCreateAccess(event.target.checked)}/><span><b>Criar acesso agora</b><small>O login será ligado a este cadastro existente.</small></span></label>{createAccess&&<div className="form-section-grid team-fields"><Field label="Nome de usuário ou e-mail" name="accessLogin" required/><label>Permissões de acesso<select value={accessRole} onChange={(event)=>setAccessRole(event.target.value as Role)}>{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div>}</>}</fieldset>}
+        </fieldset>}
+        {canManageTeam&&isTeamMember&&<fieldset className="form-section span-2"><legend>Acesso e permissões</legend>{editableMember.hasLogin?<div className="network-owner-link"><KeyRound/><span><b>Acesso já vinculado</b><small>Permissão atual: {accountRoleLabel(editableMember.accessRole ?? editableMember.role)}. Alterações de permissão, senha e status ficam em Usuários da equipe.</small></span></div>:<><label className="check"><input type="checkbox" name="createAccess" checked={createAccess} onChange={(event)=>setCreateAccess(event.target.checked)}/><span><b>Criar acesso agora</b><small>O login será ligado a este cadastro existente.</small></span></label>{createAccess&&<div className="form-section-grid team-fields"><Field label="Nome de usuário ou e-mail" name="accessLogin" required/><label>Permissões de acesso<select value={accessRole} onChange={(event)=>setAccessRole(event.target.value as Role)}>{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div>}</>}</fieldset>}
         <fieldset className="form-section span-2"><legend>Observações</legend><label>Informações adicionais<textarea name="notes" rows={3} defaultValue={draft.notes ?? editableMember.notes ?? ""}/></label></fieldset>
         {error && <div className="form-message span-2" role="alert">{error}</div>}
         {credentials&&<div className="span-2"><AccessCredentialsCard credentials={credentials} audience="equipe" onCopied={()=>setError("Endereço, login e senha temporária copiados.")}/></div>}
