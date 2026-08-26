@@ -41,6 +41,7 @@ import {
   type ResponsibleScope,
 } from "./lib/dashboardPerformance";
 import { newPersonTeamFields, resolveTeamManagedFields } from "./lib/teamAdministration";
+import { parseEstimatedVotes, summarizeVoteEstimates } from "./lib/voteEstimate";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { peMunicipalities } from "./data/pe-municipalities";
 import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createLeadershipAccess, createMember, createTeamMemberAccess, deleteMember, deleteTeamUser, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resetTeamUserPassword, resolveDuplicateReview, saveOperatingMode, setTeamUserActive, submitCollection, updateMember, updateMemberDetails, type ActivityItem, type DuplicateReview, type MemberInput, type TeamUser } from "./services/data";
@@ -209,9 +210,7 @@ export function MappingDashboard({ data }: MappingProps) {
       ? teamUsers.filter((member) => member.status !== "bloqueado" && member.status !== "inativo").length
       : data.filter((member) => member.hasLogin).length,
     supporters = data.filter((m) => m.role === "participante"),
-    confirmedCount = data.filter(confirmed).length,
-    capacity = ls.reduce((a, m) => a + (m.estimatedCapacity ?? 0), 0),
-    goal = ls.reduce((a, m) => a + (m.agreedGoal ?? 10), 0),
+    voteEstimates = summarizeVoteEstimates(data),
     duplicateCount = data.filter((m) => m.registrationStatus === "duplicado").length,
     navigate = useNavigate();
   return (
@@ -232,22 +231,13 @@ export function MappingDashboard({ data }: MappingProps) {
       <section className="map-stats">
         <Stat label="Pessoas cadastradas" value={data.length} hint={`${supporters.length} apoiadores`} tone="featured registrations" />
         <Stat
-          label="Total de lideranças"
-          value={ls.length}
-          hint="lideranças e mobilizadores"
-          tone="featured leaderships"
+          label="Estimativa total de votos"
+          value={voteEstimates.total}
+          tone="featured vote-estimate"
         />
-        <Stat
-          label="Capacidade estimada"
-          value={capacity}
-          hint="não é quantidade real"
-        />
-        <Stat label="Meta acordada" value={goal} />
-        <Stat
-          label="Realização da meta"
-          value={`${realization(confirmedCount, goal)}%`}
-          tone="lime"
-        />
+        <Stat label="Total de lideranças" value={ls.length} hint="lideranças e mobilizadores" />
+        <Stat label="Cadastros com estimativa" value={voteEstimates.withEstimate} />
+        <Stat label="Cadastros sem estimativa" value={voteEstimates.withoutEstimate} />
         <Stat label="Possíveis duplicidades" value={duplicateCount} tone={duplicateCount ? "warning" : "green"} />
       </section>
       <button className="duplicate-review-shortcut" onClick={() => navigate("/duplicidades")} aria-label={`Revisar ${duplicateCount} possível(is) duplicidade(s)`}>
@@ -478,6 +468,7 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
     [leader, setLeader] = useState("todos"),
     [creator, setCreator] = useState(searchParams.get("cadastrador") ?? "todos"),
     [peopleScope, setPeopleScope] = useState("todos"),
+    [voteEstimate, setVoteEstimate] = useState("todos"),
     [filtersOpen, setFiltersOpen] = useState(false),
     [page, setPage] = useState(1),
     [deletingId, setDeletingId] = useState(""),
@@ -499,12 +490,13 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
       && (bairro === "todos" || member.bairro === bairro)
       && (leader === "todos" || member.parentId === leader)
       && (peopleScope === "todos" || (peopleScope === "equipe" ? member.isTeamMember : !member.isTeamMember))
+      && (voteEstimate === "todos" || (voteEstimate === "com" ? member.estimatedVotes != null : member.estimatedVotes == null))
       && (creator === "todos" || (creator === "sem_usuario" ? !member.createdByProfileId : member.createdByProfileId === creator));
   });
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize)),
     currentPage = Math.min(page, pages),
     visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    activeFilters = [role,status,municipio,bairro,leader,creator,peopleScope].filter((value) => value !== "todos").length;
+    activeFilters = [role,status,municipio,bairro,leader,creator,peopleScope,voteEstimate].filter((value) => value !== "todos").length;
   function change(setter: (value: string) => void, value: string) {
     setter(value); setPage(1);
   }
@@ -512,9 +504,9 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
     if (user?.role !== "administrador") return;
     setMessage("");
     try {
-      if (isSupabaseConfigured) await recordExportAudit(filtered.length, { busca:q, tipo:role, cadastro:status, municipio, bairro, lideranca:leader, cadastrado_por:creator, pessoas:peopleScope });
-      const header = ["Nome","Telefone","E-mail","Tipo","Equipe","Precisa reunião com a candidata","Situação do cadastro","Situação do vínculo","Liderança de referência","Município","Bairro","Origem","Cadastrado por","Criado em","Última atividade"],
-        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.isTeamMember?"Sim":"Não",member.needsCandidateMeeting ? "Sim" : "Não",member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome,member.municipio,member.bairro,member.source,registrationCreatorLabel(member,data),member.joinedAt,member.lastActivity]),
+      if (isSupabaseConfigured) await recordExportAudit(filtered.length, { busca:q, tipo:role, cadastro:status, municipio, bairro, lideranca:leader, cadastrado_por:creator, pessoas:peopleScope, estimativa_votos:voteEstimate });
+      const header = ["Nome","Telefone","E-mail","Tipo","Equipe","Estimativa de votos","Precisa reunião com a candidata","Situação do cadastro","Situação do vínculo","Liderança de referência","Município","Bairro","Origem","Cadastrado por","Criado em","Última atividade"],
+        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.isTeamMember?"Sim":"Não",member.estimatedVotes,member.needsCandidateMeeting ? "Sim" : "Não",member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome,member.municipio,member.bairro,member.source,registrationCreatorLabel(member,data),member.joinedAt,member.lastActivity]),
         csv = `\uFEFF${[header,...rows].map((row) => row.map(exportCell).join(";")).join("\r\n")}`,
         url = URL.createObjectURL(new Blob([csv], { type:"text/csv;charset=utf-8" })),
         anchor = document.createElement("a");
@@ -559,12 +551,13 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
         <label className="filter-field"><span>Bairro</span><select aria-label="Filtrar por bairro" value={bairro} onChange={(e)=>change(setBairro,e.target.value)}><option value="todos">Todos os bairros</option>{neighborhoods.map((value)=><option key={value}>{value}</option>)}</select></label>
         <label className="filter-field"><span>Liderança</span><select aria-label="Filtrar por liderança" value={leader} onChange={(e)=>change(setLeader,e.target.value)}><option value="todos">Todas as lideranças</option>{leaderOptions.map((value)=><option key={value.id} value={value.id}>{value.nome}</option>)}</select></label>
         <label className="filter-field"><span>Pessoas</span><select aria-label="Filtrar pessoas da equipe" value={peopleScope} onChange={(e)=>change(setPeopleScope,e.target.value)}><option value="todos">Todas as pessoas</option><option value="equipe">Pessoas da equipe</option><option value="demais">Demais pessoas</option></select></label>
+        <label className="filter-field"><span>Estimativa</span><select aria-label="Filtrar por estimativa de votos" value={voteEstimate} onChange={(e)=>change(setVoteEstimate,e.target.value)}><option value="todos">Todas as estimativas</option><option value="com">Com estimativa</option><option value="sem">Sem estimativa</option></select></label>
         <label className="filter-field"><span>Cadastrado por</span><select aria-label="Filtrar por responsável pelo cadastro" value={creator} onChange={(e)=>change(setCreator,e.target.value)}><option value="todos">Todos os responsáveis</option>{creatorOptions.map((value)=><option key={value.id} value={value.id}>{value.name}</option>)}{hasUnattributed&&<option value="sem_usuario">Sem usuário identificado</option>}</select></label>
-        <div className="filter-actions"><button className="secondary" onClick={() => {setQ("");setRole("todos");setStatus("todos");setMunicipio("todos");setBairro("todos");setLeader("todos");setCreator("todos");setPeopleScope("todos");setPage(1);}}>Limpar filtros</button><button className="primary" onClick={() => setFiltersOpen(false)}>Ver resultados</button></div>
+        <div className="filter-actions"><button className="secondary" onClick={() => {setQ("");setRole("todos");setStatus("todos");setMunicipio("todos");setBairro("todos");setLeader("todos");setCreator("todos");setPeopleScope("todos");setVoteEstimate("todos");setPage(1);}}>Limpar filtros</button><button className="primary" onClick={() => setFiltersOpen(false)}>Ver resultados</button></div>
       </div>
       <div className="base-summary"><b>{filtered.length}</b> cadastro(s) encontrado(s) de {data.length} visíveis.</div>
       {message && <div className="form-message" role="status">{message}</div>}
-      <div className="table-wrap"><table className="responsive-table registrations-table"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Cadastrado por</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td data-label="Pessoa"><b>{member.nome}{member.isTeamMember&&<Pill tone="green">Equipe</Pill>}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td data-label="Tipo">{accountRoleLabel(member.role)}</td><td data-label="Reunião">{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td data-label="Cadastro"><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td data-label="Vínculo">{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td data-label="Liderança">{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td data-label="Local">{member.bairro}<small>{member.municipio}</small></td><td data-label="Origem">{member.source ?? "Não informada"}</td><td data-label="Cadastrado por"><b>{registrationCreatorLabel(member,data)}</b>{member.createdByRole&&<small>{accountRoleLabel(member.createdByRole)}</small>}</td><td data-label="Ações"><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table className="responsive-table registrations-table"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Estimativa de votos</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Cadastrado por</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td data-label="Pessoa"><b>{member.nome}{member.isTeamMember&&<Pill tone="green">Equipe</Pill>}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td data-label="Tipo">{accountRoleLabel(member.role)}</td><td data-label="Estimativa de votos">{member.estimatedVotes ?? "—"}</td><td data-label="Reunião">{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td data-label="Cadastro"><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td data-label="Vínculo">{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td data-label="Liderança">{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td data-label="Local">{member.bairro}<small>{member.municipio}</small></td><td data-label="Origem">{member.source ?? "Não informada"}</td><td data-label="Cadastrado por"><b>{registrationCreatorLabel(member,data)}</b>{member.createdByRole&&<small>{accountRoleLabel(member.createdByRole)}</small>}</td><td data-label="Ações"><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>)}</tbody></table></div>
       {!visible.length && <div className="empty">Nenhum cadastro corresponde aos filtros.</div>}
       <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
     </section>
@@ -613,6 +606,7 @@ export function QuickCreate({ data, setData, user }: MappingProps) {
       parentId:isOwnNetworkUser ? ownParentId : undefined,
       source:isOwnNetworkUser ? "Cadastro pela liderança" : "Cadastro administrativo",
       linkStatus:"nao_informado",
+      estimatedVotes:parseEstimatedVotes(f.get("estimatedVotes")),
       notes:String(f.get("notes")),
       registrationStatus:isDuplicate ? "duplicado" : "pendente_revisao", status:"cadastrado",
       joinedAt:new Date().toISOString().slice(0,10), lastActivity:new Date().toISOString().slice(0,10), inviteCode:"", hasLogin:false,
@@ -646,6 +640,9 @@ export function QuickCreate({ data, setData, user }: MappingProps) {
           <Field label="Bairro ou comunidade" name="bairro" defaultValue={draft.bairro} required/>
         </div></fieldset>
 
+        <fieldset className="form-section span-2"><legend>Estimativa eleitoral</legend><div className="form-section-grid">
+          <Field label="Estimativa de votos (opcional)" name="estimatedVotes" type="number" min="1" step="1" placeholder="Ex.: 10" defaultValue={draft.estimatedVotes}/>
+        </div></fieldset>
         {isOwnNetworkUser && <fieldset className="form-section span-2"><legend>Vínculo na rede</legend><div className="network-owner-link"><UserCheck/><span><b>Cadastro na sua rede</b><small>A pessoa ficará diretamente vinculada a {user?.nome}.</small></span></div></fieldset>}
         <fieldset className="form-section span-2"><legend>Observações</legend><label>Informações adicionais<textarea name="notes" rows={3} defaultValue={draft.notes}/></label></fieldset>
         {error&&<div className="form-message span-2" role="alert">{error}</div>}
@@ -700,15 +697,13 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
     event.preventDefault();
     const form = new FormData(event.currentTarget),
       phone = String(form.get("telefone")),
-      capacity = Number(form.get("capacity")),
-      goal = Number(form.get("goal")),
       requestedTeamFields = {
         role: type,
         isTeamMember,
         parentId: isTeamMember ? String(form.get("parentId")) || undefined : editableMember.parentId,
         needsCandidateMeeting: isTeamMember ? type === "lideranca" && Boolean(form.get("needsCandidateMeeting")) : editableMember.needsCandidateMeeting,
-        estimatedCapacity: isTeamMember ? capacity > 0 ? capacity : undefined : editableMember.estimatedCapacity,
-        agreedGoal: isTeamMember ? goal > 0 ? goal : undefined : editableMember.agreedGoal,
+        estimatedCapacity: editableMember.estimatedCapacity,
+        agreedGoal: editableMember.agreedGoal,
       },
       teamFields = resolveTeamManagedFields(editableMember, user?.role, requestedTeamFields),
       input: MemberInput = {
@@ -717,6 +712,7 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
         email: String(form.get("email")) || undefined,
         municipio: String(form.get("municipio")),
         bairro: String(form.get("bairro")),
+        estimatedVotes: parseEstimatedVotes(form.get("estimatedVotes")),
         ...teamFields,
         recordOrigin: editableMember.recordOrigin,
         status: editableMember.status,
@@ -765,14 +761,15 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
           <CityField defaultValue={draft.municipio ?? editableMember.municipio}/>
           <Field label="Bairro ou comunidade" name="bairro" defaultValue={draft.bairro ?? editableMember.bairro} required/>
         </div></fieldset>
+        <fieldset className="form-section span-2"><legend>Estimativa eleitoral</legend><div className="form-section-grid">
+          <Field label="Estimativa de votos (opcional)" name="estimatedVotes" type="number" min="1" step="1" placeholder="Ex.: 10" defaultValue={draft.estimatedVotes ?? editableMember.estimatedVotes ?? ""}/>
+        </div></fieldset>
         {canManageTeam&&<fieldset className="form-section span-2 team-membership-section"><legend>Participação na equipe</legend><p>Disponível somente para administradores. Desmarcar não apaga a pessoa, seus vínculos, metas, histórico ou acesso.</p>
           <label className="check team-membership-toggle"><input type="checkbox" name="isTeamMember" checked={isTeamMember} onChange={(event)=>{setIsTeamMember(event.target.checked);if(!event.target.checked)setCreateAccess(false)}}/><span><b>Faz parte da equipe</b><small>A alteração afeta somente a classificação da pessoa.</small></span></label>
           {isTeamMember&&<div className="form-section-grid team-fields">
             <label>Função ou perfil<select value={type} onChange={(event)=>setType(event.target.value as Role)} name="type">{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
             <label>Liderança ou vínculo responsável<select name="parentId" defaultValue={draft.parentId ?? editableMember.parentId ?? ""}><option value="">Sem liderança responsável</option>{leaderOptions.map((leader)=><option value={leader.id} key={leader.id}>{leader.nome}</option>)}</select></label>
             {type==="lideranca"&&<label className="check"><input type="checkbox" name="needsCandidateMeeting" defaultChecked={draft.needsCandidateMeeting!==undefined?draft.needsCandidateMeeting==="true":editableMember.needsCandidateMeeting}/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
-            <Field label="Capacidade estimada (opcional)" name="capacity" type="number" min="1" defaultValue={draft.capacity ?? editableMember.estimatedCapacity ?? ""}/>
-            <Field label="Meta inicial (opcional)" name="goal" type="number" min="1" defaultValue={draft.goal ?? editableMember.agreedGoal ?? ""}/>
           </div>}
         </fieldset>}
         {canManageTeam&&isTeamMember&&<fieldset className="form-section span-2"><legend>Acesso e permissões</legend>{editableMember.hasLogin?<div className="network-owner-link"><KeyRound/><span><b>Acesso já vinculado</b><small>Permissão atual: {accountRoleLabel(editableMember.accessRole ?? editableMember.role)}. Alterações de permissão, senha e status ficam em Usuários da equipe.</small></span></div>:<><label className="check"><input type="checkbox" name="createAccess" checked={createAccess} onChange={(event)=>setCreateAccess(event.target.checked)}/><span><b>Criar acesso agora</b><small>O login será ligado a este cadastro existente.</small></span></label>{createAccess&&<div className="form-section-grid team-fields"><Field label="Nome de usuário ou e-mail" name="accessLogin" required/><label>Permissões de acesso<select value={accessRole} onChange={(event)=>setAccessRole(event.target.value as Role)}>{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label></div>}</>}</fieldset>}

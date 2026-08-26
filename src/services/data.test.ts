@@ -13,6 +13,7 @@ const input = (changes: Partial<MemberInput> = {}): MemberInput => ({
   registrationStatus:'pendente_revisao',
   linkStatus:'nao_informado',
   needsCandidateMeeting:true,
+  estimatedVotes:12,
   estimatedCapacity:25,
   agreedGoal:10,
   ...changes,
@@ -28,16 +29,18 @@ describe('memberPayload', () => {
       bairro:'Boa Vista',
       member_role:'lideranca',
       needs_candidate_meeting:true,
+      estimated_votes:12,
       estimated_capacity:25,
       agreed_goal:10,
     })
   })
 
   it('mantém uma pessoa comum fora da equipe por padrão explícito', () => {
-    expect(memberPayload(input({ role:'participante', isTeamMember:false, estimatedCapacity:undefined, agreedGoal:undefined }))).toMatchObject({
+    expect(memberPayload(input({ role:'participante', isTeamMember:false, estimatedVotes:undefined, estimatedCapacity:undefined, agreedGoal:undefined }))).toMatchObject({
       member_role:'participante',
       is_team_member:false,
       needs_candidate_meeting:false,
+      estimated_votes:null,
       estimated_capacity:null,
       agreed_goal:null,
     })
@@ -67,6 +70,17 @@ describe('memberFromRow', () => {
       createdByName:'Maria Cadastradora',
       createdByRole:'cadastrador',
     })
+  })
+
+  it('converte a estimativa opcional de votos sem misturá-la com capacidade e meta', () => {
+    const member = memberFromRow({
+      id:'member-votes', nome:'Pessoa com estimativa', telefone_normalizado:'81999990001',
+      municipio:'Recife', bairro:'Centro', status:'cadastrado', member_role:'participante',
+      created_at:'2026-08-20T12:00:00Z', estimated_votes:14,
+      estimated_capacity:30, agreed_goal:20,
+    })
+
+    expect(member).toMatchObject({ estimatedVotes:14, estimatedCapacity:30, agreedGoal:20 })
   })
 
   it('identifica equipe e ignora login removido sem apagar a pessoa', () => {
