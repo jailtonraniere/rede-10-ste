@@ -9,13 +9,15 @@ const requireClient = () => {
 }
 
 type MemberRow = Record<string, unknown>
-const memberSelect = '*,creator:profiles!network_members_created_by_profile_id_fkey(id,nome,role),access_profile:profiles!network_members_profile_id_fkey(id,nome,telefone,email,municipio,bairro,role,status,deleted_at,username)'
+const memberSelect = '*,creator:profiles!network_members_created_by_profile_id_fkey(id,nome,role),access_profile:profiles!network_members_profile_id_fkey(id,nome,telefone,email,municipio,bairro,role,status,deleted_at,username),indicated_by:network_members!network_members_indicated_by_member_id_fkey(id,nome)'
 
 export function memberFromRow(row: MemberRow): Member {
   const relatedCreator = Array.isArray(row.creator) ? row.creator[0] : row.creator
   const creator = relatedCreator && typeof relatedCreator === 'object' ? relatedCreator as MemberRow : undefined
   const relatedAccessProfile = Array.isArray(row.access_profile) ? row.access_profile[0] : row.access_profile
   const accessProfile = relatedAccessProfile && typeof relatedAccessProfile === 'object' ? relatedAccessProfile as MemberRow : undefined
+  const relatedIndicatedBy = Array.isArray(row.indicated_by) ? row.indicated_by[0] : row.indicated_by
+  const indicatedBy = relatedIndicatedBy && typeof relatedIndicatedBy === 'object' ? relatedIndicatedBy as MemberRow : undefined
   const accessDeleted = Boolean(accessProfile?.deleted_at)
   return {
     id: String(row.id),
@@ -25,6 +27,8 @@ export function memberFromRow(row: MemberRow): Member {
     bairro: String(row.bairro ?? accessProfile?.bairro ?? ''),
     municipio: String(row.municipio ?? accessProfile?.municipio ?? ''),
     parentId: row.parent_member_id ? String(row.parent_member_id) : undefined,
+    indicatedByMemberId: row.indicated_by_member_id ? String(row.indicated_by_member_id) : undefined,
+    indicatedByName: indicatedBy?.nome ? String(indicatedBy.nome) : undefined,
     status: row.status as Member['status'],
     role: (row.member_role ?? (row.participation_type === 'mobilizador' ? 'mobilizador' : 'participante')) as Role,
     isTeamMember: Boolean(row.is_team_member),
@@ -94,6 +98,7 @@ export function memberPayload(input: MemberInput) {
   return {
     nome: input.nome.trim(), telefone_normalizado: normalizedPhone || null, email: input.email || null,
     municipio: input.municipio.trim(), bairro: input.bairro.trim(), parent_member_id: input.parentId || null,
+    indicated_by_member_id: input.indicatedByMemberId || null,
     status: input.status, participation_type: role === 'mobilizador' ? 'mobilizador' : 'participante', member_role: role,
     is_team_member: input.isTeamMember ?? false, record_origin:recordOrigin,
     registration_status: input.registrationStatus ?? 'pendente_revisao', link_status: input.linkStatus ?? 'nao_informado',
@@ -265,27 +270,81 @@ function base64Url(bytes: Uint8Array) {
   return btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')
 }
 
-export async function createCollectionLink(leaderId: string) {
-  const client = requireClient()
+async function createHashedToken() {
   const tokenBytes = crypto.getRandomValues(new Uint8Array(32))
   const token = base64Url(tokenBytes)
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))
   const tokenHash = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2,'0')).join('')
+  return { token, tokenHash }
+}
+
+export async function createCollectionLink(leaderId: string) {
+  const client = requireClient()
+  const { token, tokenHash } = await createHashedToken()
   const { data, error } = await client.rpc('rotate_collection_link', { p_leader_member_id:leaderId, p_token_hash:tokenHash })
   if (error) throw error
   if (!data) throw new Error('O banco não confirmou a criação do link.')
   return token
 }
 
-export async function submitCollection(token: string, values: Record<string, string|boolean>) {
+export async function createExternalRegistrationLink() {
+  const client = requireClient()
+  const { token, tokenHash } = await createHashedToken()
+  const { data, error } = await client.rpc('rotate_external_registration_link', { p_token_hash:tokenHash })
+  if (error) throw error
+  if (!data) throw new Error('O banco não confirmou a criação do link externo.')
+  return token
+}
+
+export async function submitCollection(token: string, values: Record<string, string|boolean|undefined>) {
   const { data, error } = await requireClient().rpc('submit_collection_member', {
     p_token:token, p_nome:values.nome, p_telefone:values.telefone, p_email:values.email,
     p_municipio:values.municipio, p_bairro:values.bairro, p_observacao:values.notes,
     p_treatment_authorized:Boolean(values.treatmentAuthorized),
     p_contact_authorized:Boolean(values.contactAuthorized),
+    p_indicated_by_member_id:values.indicatedByMemberId || null,
   })
   if (error) throw error
   return data as string
+}
+
+export type ExternalRegistrationContext = {
+  kind:'general'|'leadership'
+  defaultLeaderId?:string
+  defaultLeaderName?:string
+  expiresAt:string
+  allowsLeaderChoice:boolean
+}
+
+export type PublicReferralLeader = {
+  id:string
+  name:string
+  municipality:string
+  role:'lideranca'|'mobilizador'
+}
+
+export async function getExternalRegistrationContext(token: string): Promise<ExternalRegistrationContext|null> {
+  const { data, error } = await requireClient().rpc('get_external_registration_context', { p_token:token })
+  if (error) throw error
+  const row = data?.[0]
+  return row ? {
+    kind:row.link_kind,
+    defaultLeaderId:row.default_leader_id ?? undefined,
+    defaultLeaderName:row.default_leader_name ?? undefined,
+    expiresAt:row.expires_at,
+    allowsLeaderChoice:Boolean(row.allows_leader_choice),
+  } : null
+}
+
+export async function searchPublicReferralLeaders(token:string, query:string): Promise<PublicReferralLeader[]> {
+  const { data, error } = await requireClient().rpc('search_public_referral_leaders', { p_token:token, p_query:query })
+  if (error) throw error
+  return (data ?? []).map((row: Record<string, unknown>) => ({
+    id:String(row.leader_id),
+    name:String(row.leader_name),
+    municipality:String(row.municipality),
+    role:row.leader_role as PublicReferralLeader['role'],
+  }))
 }
 
 export async function getCollectionContext(token: string): Promise<{leaderId:string;leaderName:string;expiresAt:string}|null> {

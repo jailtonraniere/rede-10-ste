@@ -10,11 +10,13 @@ import {
   FileSpreadsheet,
   History,
   KeyRound,
+  Link2,
   MessageCircle,
   Pencil,
   Plus,
   Power,
   Search,
+  Share2,
   Settings2,
   SlidersHorizontal,
   Trash2,
@@ -44,7 +46,8 @@ import { newPersonTeamFields, resolveTeamManagedFields } from "./lib/teamAdminis
 import { parseEstimatedVotes, summarizeVoteEstimates } from "./lib/voteEstimate";
 import { isSupabaseConfigured } from "./lib/supabase";
 import { peMunicipalities } from "./data/pe-municipalities";
-import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createLeadershipAccess, createMember, createTeamMemberAccess, deleteMember, deleteTeamUser, getCollectionContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resetTeamUserPassword, resolveDuplicateReview, saveOperatingMode, setTeamUserActive, submitCollection, updateMember, updateMemberDetails, type ActivityItem, type DuplicateReview, type MemberInput, type TeamUser } from "./services/data";
+import { CampaignBrand } from "./components/CampaignBrand";
+import { bulkCreateMembers, changeTeamUserRole, createActivity, createCollectionLink, createExternalRegistrationLink, createLeadershipAccess, createMember, createTeamMemberAccess, deleteMember, deleteTeamUser, getExternalRegistrationContext, loadActivities, loadDuplicateReviews, loadOperatingMode, loadTeamUsers, recordExportAudit, resetTeamUserPassword, resolveDuplicateReview, saveOperatingMode, searchPublicReferralLeaders, setTeamUserActive, submitCollection, updateMember, updateMemberDetails, type ActivityItem, type DuplicateReview, type ExternalRegistrationContext, type MemberInput, type PublicReferralLeader, type TeamUser } from "./services/data";
 
 export type MappingProps = {
   data: Member[];
@@ -84,8 +87,8 @@ const registrationCreatorLabel = (member: Member, all: Member[]) => {
   if (member.createdByName) return member.createdByName;
   const source = member.source?.toLocaleLowerCase("pt-BR") ?? "";
   if (source.includes("link")) {
-    const leaderName = all.find((item) => item.id === member.parentId)?.nome;
-    return leaderName ? `Link de ${leaderName}` : "Link da liderança";
+    const leaderName = all.find((item) => item.id === member.parentId)?.nome ?? member.indicatedByName;
+    return leaderName ? `Link — indicação de ${leaderName}` : "Link externo de cadastro";
   }
   if (source.includes("import")) return "Importação";
   return "Não identificado";
@@ -186,7 +189,11 @@ export function MappingDashboard({ data }: MappingProps) {
     [teamError, setTeamError] = useState(""),
     [responsibleOrder, setResponsibleOrder] = useState<ResponsibleOrder>("mais"),
     [responsibleScope, setResponsibleScope] = useState<ResponsibleScope>("todos"),
-    [showAllResponsibles, setShowAllResponsibles] = useState(false);
+    [showAllResponsibles, setShowAllResponsibles] = useState(false),
+    [shareOpen, setShareOpen] = useState(false),
+    [shareToken, setShareToken] = useState(""),
+    [shareBusy, setShareBusy] = useState(false),
+    [shareMessage, setShareMessage] = useState("");
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     let active = true;
@@ -212,22 +219,63 @@ export function MappingDashboard({ data }: MappingProps) {
     supporters = data.filter((m) => m.role === "participante"),
     voteEstimates = summarizeVoteEstimates(data),
     duplicateCount = data.filter((m) => m.registrationStatus === "duplicado").length,
-    navigate = useNavigate();
+    navigate = useNavigate(),
+    shareUrl = shareToken ? `${window.location.origin}/cadastro/${shareToken}` : "";
+  async function generateExternalLink() {
+    setShareBusy(true); setShareMessage("");
+    try {
+      const token = isSupabaseConfigured
+        ? await createExternalRegistrationLink()
+        : "EXTERNO-STE-40180-REDE10";
+      setShareToken(token);
+      setShareMessage("Link pronto. Ao gerar outro, este deixa de aceitar novos cadastros.");
+    } catch (reason) {
+      setShareMessage(reason instanceof Error ? reason.message : "Não foi possível gerar o link externo.");
+    } finally {
+      setShareBusy(false);
+    }
+  }
+  function copyExternalLink() {
+    if (!shareUrl) return;
+    void navigator.clipboard?.writeText(shareUrl);
+    setShareMessage("Link copiado. Ele pode ser enviado por qualquer canal.");
+  }
   return (
     <>
       <Head
         title="Visão geral operacional"
         description="Acompanhe a qualidade da base sem confundir estimativas com resultados reais."
-        action={
-          <button
-            className="primary"
-            onClick={() => navigate("/cadastro-rapido")}
-          >
+        action={<div className="page-actions">
+          <button className="secondary share-registration-trigger" onClick={() => setShareOpen((open) => !open)} aria-expanded={shareOpen} aria-controls="external-registration-share">
+            <Share2 />
+            Compartilhar link de cadastro
+          </button>
+          <button className="primary" onClick={() => navigate("/cadastro-rapido")}>
             <Plus />
             Cadastrar pessoa
           </button>
-        }
+        </div>}
       />
+      {shareOpen && <section className="external-share-panel" id="external-registration-share">
+        <div className="external-share-intro">
+          <span className="external-share-icon" aria-hidden="true"><Link2 /></span>
+          <div>
+            <span className="eyebrow">Autocadastro externo</span>
+            <h2>Um link para toda a rede</h2>
+            <p>A pessoa preenche os próprios dados e pode informar quem a indicou. A indicação entra como pendente até a equipe confirmar o vínculo.</p>
+          </div>
+        </div>
+        {shareUrl ? <>
+          <div className="external-share-link"><code>{shareUrl}</code></div>
+          <div className="external-share-actions">
+            <button type="button" className="secondary" onClick={copyExternalLink}><Copy />Copiar link</button>
+            <a className="whatsapp" href={`https://wa.me/?text=${encodeURIComponent(`Faça seu cadastro na Rede10: ${shareUrl}`)}`} target="_blank" rel="noreferrer"><MessageCircle />Enviar no WhatsApp</a>
+            <button type="button" className="link-btn" onClick={() => void generateExternalLink()} disabled={shareBusy}>{shareBusy ? "Gerando…" : "Gerar novo link"}</button>
+          </div>
+        </> : <button type="button" className="primary external-share-generate" onClick={() => void generateExternalLink()} disabled={shareBusy}><Link2 />{shareBusy ? "Gerando…" : "Gerar link externo"}</button>}
+        {shareMessage && <div className="form-message external-share-message" role="status">{shareMessage}</div>}
+        <small className="external-share-note">Por segurança, o link expira em 30 dias e não cria acesso ao painel.</small>
+      </section>}
       <section className="map-stats">
         <Stat label="Pessoas cadastradas" value={data.length} hint={`${supporters.length} apoiadores`} tone="featured registrations" />
         <Stat
@@ -481,14 +529,14 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
     neighborhoods = [...new Set(data.filter((m) => municipio === "todos" || m.municipio === municipio).map((m) => m.bairro))].sort();
   const filtered = data.filter((member) => {
     const query = q.trim().toLocaleLowerCase("pt-BR"),
-      leaderName = data.find((item) => item.id === member.parentId)?.nome ?? "",
+      leaderName = data.find((item) => item.id === member.parentId)?.nome ?? member.indicatedByName ?? "",
       creatorName = registrationCreatorLabel(member, data);
     return (!query || [member.nome, member.telefone, member.email, member.municipio, member.bairro, leaderName, creatorName].some((value) => value?.toLocaleLowerCase("pt-BR").includes(query)))
       && (role === "todos" || member.role === role)
       && (status === "todos" || member.registrationStatus === status)
       && (municipio === "todos" || member.municipio === municipio)
       && (bairro === "todos" || member.bairro === bairro)
-      && (leader === "todos" || member.parentId === leader)
+      && (leader === "todos" || member.parentId === leader || member.indicatedByMemberId === leader)
       && (peopleScope === "todos" || (peopleScope === "equipe" ? member.isTeamMember : !member.isTeamMember))
       && (voteEstimate === "todos" || (voteEstimate === "com" ? member.estimatedVotes != null : member.estimatedVotes == null))
       && (creator === "todos" || (creator === "sem_usuario" ? !member.createdByProfileId : member.createdByProfileId === creator));
@@ -506,7 +554,7 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
     try {
       if (isSupabaseConfigured) await recordExportAudit(filtered.length, { busca:q, tipo:role, cadastro:status, municipio, bairro, lideranca:leader, cadastrado_por:creator, pessoas:peopleScope, estimativa_votos:voteEstimate });
       const header = ["Nome","Telefone","E-mail","Tipo","Equipe","Estimativa de votos","Precisa reunião com a candidata","Situação do cadastro","Situação do vínculo","Liderança de referência","Município","Bairro","Origem","Cadastrado por","Criado em","Última atividade"],
-        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.isTeamMember?"Sim":"Não",member.estimatedVotes,member.needsCandidateMeeting ? "Sim" : "Não",member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome,member.municipio,member.bairro,member.source,registrationCreatorLabel(member,data),member.joinedAt,member.lastActivity]),
+        rows = filtered.map((member) => [member.nome,member.telefone,member.email,member.role,member.isTeamMember?"Sim":"Não",member.estimatedVotes,member.needsCandidateMeeting ? "Sim" : "Não",member.registrationStatus,member.linkStatus,data.find((item) => item.id === member.parentId)?.nome ?? member.indicatedByName,member.municipio,member.bairro,member.source,registrationCreatorLabel(member,data),member.joinedAt,member.lastActivity]),
         csv = `\uFEFF${[header,...rows].map((row) => row.map(exportCell).join(";")).join("\r\n")}`,
         url = URL.createObjectURL(new Blob([csv], { type:"text/csv;charset=utf-8" })),
         anchor = document.createElement("a");
@@ -557,7 +605,10 @@ export function RegistrationsPage({ data, setData, user }: MappingProps) {
       </div>
       <div className="base-summary"><b>{filtered.length}</b> cadastro(s) encontrado(s) de {data.length} visíveis.</div>
       {message && <div className="form-message" role="status">{message}</div>}
-      <div className="table-wrap"><table className="responsive-table registrations-table"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Estimativa de votos</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Cadastrado por</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=><tr key={member.id}><td data-label="Pessoa"><b>{member.nome}{member.isTeamMember&&<Pill tone="green">Equipe</Pill>}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td data-label="Tipo">{accountRoleLabel(member.role)}</td><td data-label="Estimativa de votos">{member.estimatedVotes ?? "—"}</td><td data-label="Reunião">{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td data-label="Cadastro"><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td data-label="Vínculo">{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td data-label="Liderança">{data.find((item)=>item.id===member.parentId)?.nome ?? "Sem referência"}</td><td data-label="Local">{member.bairro}<small>{member.municipio}</small></td><td data-label="Origem">{member.source ?? "Não informada"}</td><td data-label="Cadastrado por"><b>{registrationCreatorLabel(member,data)}</b>{member.createdByRole&&<small>{accountRoleLabel(member.createdByRole)}</small>}</td><td data-label="Ações"><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>)}</tbody></table></div>
+      <div className="table-wrap"><table className="responsive-table registrations-table"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Estimativa de votos</th><th>Reunião</th><th>Cadastro</th><th>Vínculo</th><th>Liderança</th><th>Local</th><th>Origem</th><th>Cadastrado por</th><th>Ações</th></tr></thead><tbody>{visible.map((member)=>{
+        const confirmedLeaderName = data.find((item)=>item.id===member.parentId)?.nome;
+        return <tr key={member.id}><td data-label="Pessoa"><b>{member.nome}{member.isTeamMember&&<Pill tone="green">Equipe</Pill>}</b><small>{member.telefone}{member.email ? ` · ${member.email}` : ""}</small></td><td data-label="Tipo">{accountRoleLabel(member.role)}</td><td data-label="Estimativa de votos">{member.estimatedVotes ?? "—"}</td><td data-label="Reunião">{member.needsCandidateMeeting ? <Pill tone="warning">Solicitada</Pill> : "—"}</td><td data-label="Cadastro"><Pill>{regLabels[member.registrationStatus ?? "pendente_revisao"]}</Pill></td><td data-label="Vínculo">{linkLabels[member.linkStatus ?? "nao_informado"]}</td><td data-label="Liderança">{confirmedLeaderName ? <><b>{confirmedLeaderName}</b><small>Vínculo confirmado</small></> : member.indicatedByName ? <><b>{member.indicatedByName}</b><Pill tone="warning">Indicação aguardando</Pill></> : "Sem referência"}</td><td data-label="Local">{member.bairro}<small>{member.municipio}</small></td><td data-label="Origem">{member.source ?? "Não informada"}</td><td data-label="Cadastrado por"><b>{registrationCreatorLabel(member,data)}</b>{member.createdByRole&&<small>{accountRoleLabel(member.createdByRole)}</small>}</td><td data-label="Ações"><div className="registration-actions"><button className="edit-registration" onClick={()=>navigate(`/cadastros/${member.id}/editar`)} aria-label={`Editar cadastro de ${member.nome}`}><Pencil/>Editar</button>{user?.role === "administrador" && <button className="delete-registration" disabled={deletingId === member.id} onClick={()=>void removeRegistration(member)} aria-label={`Excluir cadastro de ${member.nome}`} title={member.hasLogin ? "Este cadastro possui login ativo" : "Excluir cadastro"}><Trash2/>{deletingId === member.id ? "Excluindo…" : "Excluir"}</button>}</div></td></tr>;
+      })}</tbody></table></div>
       {!visible.length && <div className="empty">Nenhum cadastro corresponde aos filtros.</div>}
       <div className="pagination"><button className="secondary" disabled={currentPage===1} onClick={()=>setPage((value)=>value-1)}>Anterior</button><span>Página {currentPage} de {pages}</span><button className="secondary" disabled={currentPage===pages} onClick={()=>setPage((value)=>value+1)}>Próxima</button></div>
     </section>
@@ -691,16 +742,24 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
   if (!member) return <Head title="Cadastro não encontrado" description="O registro solicitado não está disponível no seu escopo de acesso."/>;
 
   const editableMember = member,
-    leaderOptions = leaders(data).filter((candidate) => candidate.id !== editableMember.id && !isDescendantOf(data, candidate.id, editableMember.id));
+    leaderOptions = leaders(data).filter((candidate) => candidate.id !== editableMember.id && !isDescendantOf(data, candidate.id, editableMember.id)),
+    hasPendingReferral = editableMember.linkStatus === "em_validacao" && Boolean(editableMember.indicatedByMemberId);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget),
       phone = String(form.get("telefone")),
+      referralDecision = String(form.get("referralDecision") || "pending"),
+      selectedParentId = String(form.get("parentId")) || undefined,
+      resolvedParentId = canManageTeam
+        ? hasPendingReferral
+          ? referralDecision === "confirm" ? selectedParentId : referralDecision === "reject" ? undefined : editableMember.parentId
+          : selectedParentId
+        : editableMember.parentId,
       requestedTeamFields = {
         role: type,
         isTeamMember,
-        parentId: isTeamMember ? String(form.get("parentId")) || undefined : editableMember.parentId,
+        parentId: resolvedParentId,
         needsCandidateMeeting: isTeamMember ? type === "lideranca" && Boolean(form.get("needsCandidateMeeting")) : editableMember.needsCandidateMeeting,
         estimatedCapacity: editableMember.estimatedCapacity,
         agreedGoal: editableMember.agreedGoal,
@@ -714,10 +773,14 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
         bairro: String(form.get("bairro")),
         estimatedVotes: parseEstimatedVotes(form.get("estimatedVotes")),
         ...teamFields,
+        indicatedByMemberId: editableMember.indicatedByMemberId,
+        indicatedByName: editableMember.indicatedByName,
         recordOrigin: editableMember.recordOrigin,
         status: editableMember.status,
         registrationStatus: editableMember.registrationStatus,
-        linkStatus: editableMember.linkStatus,
+        linkStatus: hasPendingReferral && canManageTeam
+          ? referralDecision === "confirm" ? "confirmado_pessoa" : referralDecision === "reject" ? "recusado" : editableMember.linkStatus
+          : editableMember.linkStatus,
         source: editableMember.source,
         contactAuthorized: editableMember.contactAuthorized,
         notes: String(form.get("notes")) || undefined,
@@ -726,6 +789,10 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
         estimateMethod: editableMember.estimateMethod,
         lastReview: editableMember.lastReview,
       };
+    if (hasPendingReferral && referralDecision === "confirm" && !selectedParentId) {
+      setError("Selecione uma liderança antes de confirmar a indicação.");
+      return;
+    }
     setSaving(true); setError("");
     try {
       let saved: Member = isSupabaseConfigured ? await updateMemberDetails(editableMember.id, input) : { ...editableMember, ...input, lastActivity:new Date().toISOString().slice(0,10) };
@@ -764,11 +831,17 @@ export function EditRegistration({ data, setData, user }: MappingProps) {
         <fieldset className="form-section span-2"><legend>Estimativa eleitoral</legend><div className="form-section-grid">
           <Field label="Estimativa de votos (opcional)" name="estimatedVotes" type="number" min="1" step="1" placeholder="Ex.: 10" defaultValue={draft.estimatedVotes ?? editableMember.estimatedVotes ?? ""}/>
         </div></fieldset>
+        {canManageTeam&&<fieldset className="form-section span-2 referral-review-section"><legend>Indicação e vínculo</legend><p>{hasPendingReferral ? "A pessoa informou quem a indicou. Confirme ou recuse essa informação antes de formar a hierarquia da rede." : "Defina a liderança responsável pelo vínculo desta pessoa, quando aplicável."}</p>
+          {editableMember.indicatedByName&&<div className="declared-referral"><UserCheck/><span><b>Indicação declarada: {editableMember.indicatedByName}</b><small>{hasPendingReferral ? "Ainda não confirmada pela equipe" : "Informação preservada do autocadastro"}</small></span>{hasPendingReferral&&<Pill tone="warning">Aguardando validação</Pill>}</div>}
+          <div className="form-section-grid">
+            <label>Liderança responsável<select name="parentId" defaultValue={draft.parentId ?? editableMember.parentId ?? editableMember.indicatedByMemberId ?? ""}><option value="">Sem liderança responsável</option>{leaderOptions.map((leader)=><option value={leader.id} key={leader.id}>{leader.nome}</option>)}</select></label>
+            {hasPendingReferral&&<label>Decisão sobre a indicação<select name="referralDecision" defaultValue="pending"><option value="pending">Manter aguardando validação</option><option value="confirm">Confirmar liderança selecionada</option><option value="reject">Recusar indicação e deixar sem vínculo</option></select></label>}
+          </div>
+        </fieldset>}
         {canManageTeam&&<fieldset className="form-section span-2 team-membership-section"><legend>Participação na equipe</legend><p>Disponível somente para administradores. Desmarcar não apaga a pessoa, seus vínculos, metas, histórico ou acesso.</p>
           <label className="check team-membership-toggle"><input type="checkbox" name="isTeamMember" checked={isTeamMember} onChange={(event)=>{setIsTeamMember(event.target.checked);if(!event.target.checked)setCreateAccess(false)}}/><span><b>Faz parte da equipe</b><small>A alteração afeta somente a classificação da pessoa.</small></span></label>
           {isTeamMember&&<div className="form-section-grid team-fields">
             <label>Função ou perfil<select value={type} onChange={(event)=>setType(event.target.value as Role)} name="type">{teamRoleOptions.map((option)=><option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-            <label>Liderança ou vínculo responsável<select name="parentId" defaultValue={draft.parentId ?? editableMember.parentId ?? ""}><option value="">Sem liderança responsável</option>{leaderOptions.map((leader)=><option value={leader.id} key={leader.id}>{leader.nome}</option>)}</select></label>
             {type==="lideranca"&&<label className="check"><input type="checkbox" name="needsCandidateMeeting" defaultChecked={draft.needsCandidateMeeting!==undefined?draft.needsCandidateMeeting==="true":editableMember.needsCandidateMeeting}/><span>Esta liderança precisa de reunião com a candidata.</span></label>}
           </div>}
         </fieldset>}
@@ -1411,33 +1484,110 @@ export function Duplicates({ data, user }: MappingProps) {
 
 export function PublicCollection({ data, setData }: MappingProps) {
   const { code } = useParams();
-  const localLeader = data.find((m) => m.collectionCode === code && (m.role === "lideranca" || m.role === "mobilizador"));
-  const [context, setContext] = useState<{leaderId:string;leaderName:string}|null>(localLeader ? {leaderId:localLeader.id,leaderName:localLeader.nome} : null);
-  const [loading, setLoading] = useState(isSupabaseConfigured), [message, setMessage] = useState(""), [completed, setCompleted] = useState(false);
+  const localLeader = data.find((m) => m.collectionCode === code && (m.role === "lideranca" || m.role === "mobilizador")),
+    isDemoGeneralLink = !isSupabaseConfigured && code === "EXTERNO-STE-40180-REDE10",
+    localContext: ExternalRegistrationContext|null = localLeader
+      ? { kind:"leadership", defaultLeaderId:localLeader.id, defaultLeaderName:localLeader.nome, expiresAt:"", allowsLeaderChoice:false }
+      : isDemoGeneralLink
+        ? { kind:"general", expiresAt:"", allowsLeaderChoice:true }
+        : null;
+  const [context, setContext] = useState<ExternalRegistrationContext|null>(localContext),
+    [loading, setLoading] = useState(isSupabaseConfigured),
+    [message, setMessage] = useState(""),
+    [completed, setCompleted] = useState(false),
+    [leaderQuery, setLeaderQuery] = useState(""),
+    [leaderOptions, setLeaderOptions] = useState<PublicReferralLeader[]>([]),
+    [selectedLeader, setSelectedLeader] = useState<PublicReferralLeader|null>(null),
+    [withoutReferral, setWithoutReferral] = useState(false),
+    [leaderSearchBusy, setLeaderSearchBusy] = useState(false);
   useEffect(() => {
     if (!isSupabaseConfigured || !code) return;
-    getCollectionContext(code).then(setContext).catch(()=>setContext(null)).finally(()=>setLoading(false));
+    getExternalRegistrationContext(code).then(setContext).catch(()=>setContext(null)).finally(()=>setLoading(false));
   }, [code]);
-  if (loading) return <main className="public-form success"><h1>Validando link…</h1></main>;
-  if (!context) return <main className="public-form success"><AlertTriangle/><h1>Link indisponível</h1><p>Este link de cadastro não existe ou foi desativado. Solicite um novo link à coordenação.</p></main>;
+  useEffect(() => {
+    if (!context?.allowsLeaderChoice || selectedLeader || leaderQuery.trim().length < 2 || !code) {
+      return;
+    }
+    let active = true;
+    const timeout = window.setTimeout(() => {
+      setLeaderSearchBusy(true);
+      const query = leaderQuery.trim().toLocaleLowerCase("pt-BR");
+      const request = isSupabaseConfigured
+        ? searchPublicReferralLeaders(code, leaderQuery.trim())
+        : Promise.resolve(leaders(data)
+          .filter((leader) => !["inativo","desligado","duplicado"].includes(leader.registrationStatus ?? ""))
+          .filter((leader) => `${leader.nome} ${leader.municipio}`.toLocaleLowerCase("pt-BR").includes(query))
+          .slice(0, 20)
+          .map((leader) => ({ id:leader.id, name:leader.nome, municipality:leader.municipio, role:leader.role as PublicReferralLeader["role"] })));
+      request.then((result) => { if (active) setLeaderOptions(result); })
+        .catch(() => { if (active) setLeaderOptions([]); })
+        .finally(() => { if (active) setLeaderSearchBusy(false); });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timeout); };
+  }, [code, context?.allowsLeaderChoice, data, leaderQuery, selectedLeader]);
+  if (loading) return <main className="public-registration-page"><section className="public-registration-card public-registration-state"><CampaignBrand/><h1>Validando link…</h1><p>Estamos verificando se este cadastro ainda está disponível.</p></section></main>;
+  if (!context) return <main className="public-registration-page"><section className="public-registration-card public-registration-state"><CampaignBrand/><AlertTriangle/><h1>Link indisponível</h1><p>Este link de cadastro não existe, expirou ou foi desativado. Solicite um novo link à coordenação.</p></section></main>;
   const activeContext = context;
-  if (completed) return <main className="public-form success"><CheckCircle2/><span className="eyebrow">Autocadastro recebido</span><h1>Cadastro enviado com sucesso</h1><p>Seus dados foram vinculados à liderança de {activeContext.leaderName} e aguardam validação da coordenação.</p><small>O cadastro não cria login e não representa comprovação ou promessa de voto.</small></main>;
+  const indicatedLeaderName = activeContext.defaultLeaderName ?? selectedLeader?.name;
+  if (completed) return <main className="public-registration-page"><section className="public-registration-card public-registration-state success"><CampaignBrand/><CheckCircle2/><span className="eyebrow">Autocadastro recebido</span><h1>Cadastro enviado com sucesso</h1><p>{indicatedLeaderName ? `Registramos sua indicação de ${indicatedLeaderName}. A equipe vai conferir o vínculo antes de confirmá-lo.` : "Seu cadastro foi recebido e seguirá para revisão da equipe."}</p><small>O cadastro não cria login no painel e o envio pode passar por conferência para evitar duplicidades.</small></section></main>;
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = e.currentTarget;
     const f = new FormData(form);
+    if (activeContext.allowsLeaderChoice && !selectedLeader && !withoutReferral) {
+      setMessage("Escolha a liderança que indicou você ou marque que não encontrou uma referência.");
+      return;
+    }
     const candidate = { nome: String(f.get("nome")), telefone: String(f.get("telefone")), bairro: String(f.get("bairro")) };
     if (!isSupabaseConfigured && duplicateCandidates(candidate, data).length) { setMessage("Este telefone ou cadastro já consta na base. Nenhum registro duplicado foi criado."); return; }
     try {
-      if (isSupabaseConfigured && code) await submitCollection(code,{ nome:candidate.nome, telefone:candidate.telefone, email:String(f.get("email")), municipio:String(f.get("municipio")), bairro:candidate.bairro, notes:String(f.get("notes")), treatmentAuthorized:Boolean(f.get("treatmentAuthorized")), contactAuthorized:Boolean(f.get("contactAuthorized")) });
+      const indicatedByMemberId = activeContext.defaultLeaderId ?? selectedLeader?.id;
+      if (isSupabaseConfigured && code) await submitCollection(code,{ nome:candidate.nome, telefone:candidate.telefone, email:String(f.get("email")), municipio:String(f.get("municipio")), bairro:candidate.bairro, notes:String(f.get("notes")), treatmentAuthorized:Boolean(f.get("treatmentAuthorized")), contactAuthorized:Boolean(f.get("contactAuthorized")), indicatedByMemberId });
       else {
         const now = new Date().toISOString().slice(0, 10);
-        setData((s) => [...s, { id: crypto.randomUUID(), nome:candidate.nome, telefone:candidate.telefone, email:String(f.get("email"))||undefined, municipio:String(f.get("municipio")), bairro:candidate.bairro, parentId:activeContext.leaderId, role:"participante", status:"cadastrado", registrationStatus:"pendente_revisao", linkStatus:"informado_lideranca", source:`Link de base — ${activeContext.leaderName}`, contactAuthorized:Boolean(f.get("contactAuthorized")), notes:String(f.get("notes")), joinedAt:now, lastActivity:now, inviteCode:"", hasLogin:false }]);
+        setData((s) => [...s, { id: crypto.randomUUID(), nome:candidate.nome, telefone:candidate.telefone, email:String(f.get("email"))||undefined, municipio:String(f.get("municipio")), bairro:candidate.bairro, indicatedByMemberId, indicatedByName:indicatedLeaderName, role:"participante", status:"cadastrado", registrationStatus:"pendente_revisao", linkStatus:indicatedByMemberId ? "em_validacao" : "nao_informado", source:"Autocadastro por link externo", recordOrigin:"autocadastro", contactAuthorized:Boolean(f.get("contactAuthorized")), notes:String(f.get("notes")), joinedAt:now, lastActivity:now, inviteCode:"", hasLogin:false }]);
       }
       setCompleted(true); form.reset();
     } catch (reason) { const detail=reason instanceof Error?reason.message:"Não foi possível enviar."; setMessage(detail.includes("Cadastro ja existente")?"Este telefone já consta na base.":detail); }
   }
-  return <main className="public-form collection-public"><div className="brand"><span className="brand-mark">40180</span><span><b>TIME 40180</b><small>Autocadastro</small></span></div><span className="eyebrow">Convite de {activeContext.leaderName}</span><h1>Faça seu cadastro</h1><p>Preencha seus próprios dados para participar voluntariamente da rede. Seu cadastro será vinculado a {activeContext.leaderName} e revisado pela coordenação.</p><form onSubmit={submit} className="stack"><Field label="Seu nome completo" name="nome" autoComplete="name" required/><PhoneField/><Field label="Seu e-mail (opcional)" name="email" type="email" autoComplete="email"/><div className="form-row"><CityField/><Field label="Seu bairro ou comunidade" name="bairro" autoComplete="address-level3" required/></div><label>Observação (opcional)<textarea name="notes" rows={3}/></label><label className="check"><input type="checkbox" name="treatmentAuthorized" required/><span>Li a <a href="/privacidade" target="_blank" rel="noreferrer">política de privacidade</a> e autorizo o tratamento dos meus dados para participação na rede.</span></label><label className="check"><input type="checkbox" name="contactAuthorized"/><span>Autorizo, separadamente e de forma opcional, o recebimento de comunicações da equipe.</span></label>{message&&<div className="form-message" role="status">{message}</div>}<button className="primary">Enviar meu cadastro</button><small>Este formulário não cria login e não representa comprovação ou promessa de voto.</small></form></main>;
+  return <main className="public-registration-page">
+    <section className="public-registration-card collection-public">
+      <CampaignBrand/>
+      <header className="public-registration-heading">
+        <span className="eyebrow">Cadastro voluntário · Rede10</span>
+        <h1>Entre para a nossa rede</h1>
+        <p>Preencha seus dados e, se alguém convidou você, informe a liderança. A equipe revisará o cadastro antes de confirmar qualquer vínculo.</p>
+      </header>
+      <form onSubmit={submit} className="stack public-registration-form">
+        <fieldset className="public-form-section"><legend>Seus dados</legend>
+          <Field label="Nome completo" name="nome" autoComplete="name" required/>
+          <PhoneField/>
+          <Field label="E-mail (opcional)" name="email" type="email" autoComplete="email"/>
+          <div className="form-row"><CityField/><Field label="Bairro ou comunidade" name="bairro" autoComplete="address-level3" required/></div>
+        </fieldset>
+        <fieldset className="public-form-section referral-picker"><legend>Quem indicou você?</legend>
+          {activeContext.defaultLeaderId ? <div className="selected-referral locked"><UserCheck/><span><b>{activeContext.defaultLeaderName}</b><small>Indicação vinculada a este link</small></span></div> : <>
+            <p>Busque pelo nome da liderança ou mobilizador. Essa informação será validada pela equipe.</p>
+            {selectedLeader ? <div className="selected-referral"><UserCheck/><span><b>{selectedLeader.name}</b><small>{selectedLeader.role === "lideranca" ? "Liderança" : "Mobilizador"} · {selectedLeader.municipality}</small></span><button type="button" className="icon" aria-label="Trocar liderança indicada" onClick={() => { setSelectedLeader(null); setLeaderQuery(""); }}><X/></button></div> : <>
+              <label className="public-leader-search"><Search/><input type="search" value={leaderQuery} onChange={(event) => { const value = event.target.value; setLeaderQuery(value); setWithoutReferral(false); if (value.trim().length < 2) { setLeaderOptions([]); setLeaderSearchBusy(false); } }} placeholder="Digite pelo menos 2 letras" autoComplete="off" aria-label="Buscar liderança ou mobilizador" aria-describedby="leader-search-help"/></label>
+              <small id="leader-search-help" className="leader-search-help">Mostramos somente nome, município e função.</small>
+              {leaderSearchBusy && <div className="leader-search-status" role="status">Buscando lideranças…</div>}
+              {!leaderSearchBusy && leaderQuery.trim().length >= 2 && <div className="leader-search-results" role="listbox" aria-label="Lideranças encontradas">{leaderOptions.length ? leaderOptions.map((leader) => <button type="button" role="option" aria-selected="false" key={leader.id} onClick={() => { setSelectedLeader(leader); setLeaderQuery(leader.name); setLeaderOptions([]); setWithoutReferral(false); }}><span><b>{leader.name}</b><small>{leader.role === "lideranca" ? "Liderança" : "Mobilizador"} · {leader.municipality}</small></span><ChevronRight/></button>) : <span>Nenhuma liderança encontrada com esse nome.</span>}</div>}
+            </>}
+            {!selectedLeader && <button type="button" className={`no-referral-option ${withoutReferral ? "selected" : ""}`} aria-pressed={withoutReferral} onClick={() => { setWithoutReferral((current) => !current); setLeaderQuery(""); setLeaderOptions([]); }}><span aria-hidden="true">{withoutReferral ? "✓" : "○"}</span>Não fui indicado ou não encontrei a liderança</button>}
+          </>}
+        </fieldset>
+        <fieldset className="public-form-section"><legend>Complemento e consentimento</legend>
+          <label>Observação (opcional)<textarea name="notes" rows={3}/></label>
+          <label className="check"><input type="checkbox" name="treatmentAuthorized" required/><span>Li a <a href="/privacidade" target="_blank" rel="noreferrer">política de privacidade</a> e autorizo o tratamento dos meus dados para participação na rede.</span></label>
+          <label className="check"><input type="checkbox" name="contactAuthorized"/><span>Autorizo, separadamente e de forma opcional, o recebimento de comunicações da equipe.</span></label>
+        </fieldset>
+        {message&&<div className="form-message" role="status">{message}</div>}
+        <button className="primary public-submit">Enviar meu cadastro</button>
+        <small className="public-form-disclaimer">Este formulário não cria login no painel. Seus dados serão usados apenas conforme os consentimentos acima.</small>
+      </form>
+    </section>
+  </main>;
 }
 
 export function TeamUsers({ user, data, refresh }: MappingProps) {
