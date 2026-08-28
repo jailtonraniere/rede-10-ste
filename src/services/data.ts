@@ -9,7 +9,7 @@ const requireClient = () => {
 }
 
 type MemberRow = Record<string, unknown>
-const memberSelect = '*,creator:profiles!network_members_created_by_profile_id_fkey(id,nome,role),access_profile:profiles!network_members_profile_id_fkey(id,nome,telefone,email,municipio,bairro,role,status,deleted_at,username),indicated_by:network_members!network_members_indicated_by_member_id_fkey(id,nome)'
+export const memberSelect = '*,creator:profiles!network_members_created_by_profile_id_fkey(id,nome,role),access_profile:profiles!network_members_profile_id_fkey(id,nome,telefone,email,municipio,bairro,role,status,deleted_at,username),indicated_by:network_members!indicated_by_member_id(id,nome)'
 
 export function memberFromRow(row: MemberRow): Member {
   const relatedCreator = Array.isArray(row.creator) ? row.creator[0] : row.creator

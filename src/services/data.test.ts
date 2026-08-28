@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { memberFromRow, memberPayload, type MemberInput } from './data'
+import { memberFromRow, memberPayload, memberSelect, type MemberInput } from './data'
 
 const input = (changes: Partial<MemberInput> = {}): MemberInput => ({
   nome:'Maria da Silva',
@@ -109,5 +109,12 @@ describe('memberFromRow', () => {
     })
 
     expect(member).toMatchObject({ isTeamMember:true, recordOrigin:'equipe', telefone:'Não informado', hasLogin:false })
+  })
+})
+
+describe('memberSelect', () => {
+  it('desambigua a autorrelação de indicação pela coluna reconhecida pelo PostgREST', () => {
+    expect(memberSelect).toContain('indicated_by:network_members!indicated_by_member_id(id,nome)')
+    expect(memberSelect).not.toContain('network_members_indicated_by_member_id_fkey')
   })
 })
