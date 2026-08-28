@@ -23,3 +23,9 @@ body{padding:0;overscroll-behavior-y:none}.app-shell{display:block;min-width:0}.
 @media(max-width:380px){.login-mobile-brand{padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}.login-mobile-brand .brand-mark{width:58px}.login-entry .login-form{padding:27px max(20px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left))}.login-card h2{font-size:1.75rem}.login-card>p{font-size:.84rem}.login-card form{gap:16px;margin-top:23px}}
 @media(max-width:1000px) and (max-height:700px){.login-entry .login-form{align-items:start;padding-top:24px;padding-bottom:24px}}
 @media(max-width:768px){.access-share-card,.team-users-layout .access-share-card{grid-template-columns:minmax(0,1fr)}.access-share-card .credential-intro,.access-share-card .credential-url,.access-share-card .credential-actions{grid-column:auto}.credential-actions{grid-template-columns:minmax(0,1fr)}}
+
+/* Ajustes responsivos da identidade Ste */
+.form-section legend,.leader-progress-card strong,.secondary-details summary{font-family:'Barlow Condensed','Arial Narrow','Inter',sans-serif}
+.hero-card{background:linear-gradient(112deg,var(--campaign-yellow),color-mix(in srgb,var(--campaign-yellow) 78%,var(--campaign-orange-light)));color:var(--text-primary)}
+.invite-link,.credentials-card{background:linear-gradient(125deg,var(--campaign-blue),color-mix(in srgb,var(--campaign-blue) 82%,var(--text-primary)))}
+@media(max-width:768px){.mobile-bottom-nav button.create{background:var(--campaign-pink);box-shadow:0 7px 16px color-mix(in srgb,var(--campaign-pink) 24%,transparent)}.mobile-bottom-nav button.create.active{background:#C20A69}.login-mobile-brand .brand-mark{width:auto;min-width:64px;border-radius:4px;background:var(--campaign-pink);color:var(--surface);box-shadow:4px 4px 0 var(--campaign-yellow)}}

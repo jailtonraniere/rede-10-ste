@@ -16,6 +16,7 @@ const input = (changes: Partial<MemberInput> = {}): MemberInput => ({
   estimatedVotes:12,
   estimatedCapacity:25,
   agreedGoal:10,
+  indicatedByMemberId:'leader-indicated',
   ...changes,
 })
 
@@ -32,6 +33,7 @@ describe('memberPayload', () => {
       estimated_votes:12,
       estimated_capacity:25,
       agreed_goal:10,
+      indicated_by_member_id:'leader-indicated',
     })
   })
 
@@ -81,6 +83,21 @@ describe('memberFromRow', () => {
     })
 
     expect(member).toMatchObject({ estimatedVotes:14, estimatedCapacity:30, agreedGoal:20 })
+  })
+
+  it('mantém separadas a indicação declarada e a liderança validada', () => {
+    const member = memberFromRow({
+      id:'member-referral', nome:'Pessoa indicada', telefone_normalizado:'81999990002',
+      municipio:'Recife', bairro:'Centro', status:'cadastrado', member_role:'participante',
+      created_at:'2026-08-27T12:00:00Z', indicated_by_member_id:'leader-declared',
+      parent_member_id:null, indicated_by:{ id:'leader-declared', nome:'Liderança Declarada' },
+    })
+
+    expect(member).toMatchObject({
+      indicatedByMemberId:'leader-declared',
+      indicatedByName:'Liderança Declarada',
+      parentId:undefined,
+    })
   })
 
   it('identifica equipe e ignora login removido sem apagar a pessoa', () => {

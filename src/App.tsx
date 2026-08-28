@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { appConfig } from "./config";
+import { CampaignBrand } from "./components/CampaignBrand";
 import { statuses } from "./data/demo";
 import {
   brazilianPhonePattern,
@@ -59,15 +60,7 @@ const Status = ({ value }: { value: string }) => (
   <span className={`status ${value}`}>{statuses[value] ?? value}</span>
 );
 function Logo() {
-  return (
-    <div className="brand">
-      <span className="brand-mark">40180</span>
-      <span>
-        <b>TIME 40180</b>
-        <small>Ste Vilela · {appConfig.name}</small>
-      </span>
-    </div>
-  );
+  return <CampaignBrand />;
 }
 
 function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
@@ -1080,6 +1073,7 @@ export default function App() {
   return (
     <Suspense fallback={<LoadingScreen />}><Routes>
       <Route path="/privacidade" element={<Privacy />} />
+      <Route path="/cadastro/:code" element={<PublicCollection {...mp} />} />
       <Route path="/coleta/:code" element={<PublicCollection {...mp} />} />
       <Route path="/convite/:code" element={<DisabledInvite />} />
       <Route path="/nova-senha" element={<NewPassword />} />
